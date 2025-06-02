@@ -62,16 +62,19 @@ export class TaskExecutor {
       if (isSearchTask) {
         console.log(`[TaskExecutor] Task ${task.id} identified as a search task.`);
         
-        const decisionEngine = new DecisionEngine();
+        const geminiApiKey = process.env.GEMINI_API_KEY;
+        const decisionEngine = new DecisionEngine(geminiApiKey); // Pass Gemini API key
+        
         // Define available search providers for this executor. Could be from config.
-        const availableProviders: SearchProviderOption[] = ['tavily', 'serper']; 
-        // if Gemini is to be used for search-like queries by TaskExecutor, add 'gemini'
+        // Making Gemini available for decision, even if not fully implemented for search yet in TaskExecutor
+        const availableProviders: SearchProviderOption[] = ['tavily', 'serper', 'gemini']; 
         
         const decisionInput: ChooseSearchProviderInput = {
           taskDescription: task.description,
           availableProviders: availableProviders,
         };
-        const searchDecision = decisionEngine.chooseSearchProvider(decisionInput);
+        // Await chooseSearchProvider as it's now async
+        const searchDecision = await decisionEngine.chooseSearchProvider(decisionInput);
         console.log(`[TaskExecutor] DecisionEngine chose provider: ${searchDecision.provider}. Reason: ${searchDecision.reason}`);
 
         let query = this.extractSearchQuery(task.description, searchKeywords);
@@ -209,13 +212,16 @@ export class TaskExecutor {
 
       // Log the initial error for this specific attempt
       console.error(`[TaskExecutor] Error during task ${task.id} execution (Attempt details: ${task.retries} previous retries). Error: ${errorMessage}`, error);
+      
+      const geminiApiKey = process.env.GEMINI_API_KEY; // Also get key for DE in catch block
+      const decisionEngine = new DecisionEngine(geminiApiKey); // Pass key here
 
-      const decisionEngine = new DecisionEngine();
       const failureDecisionInput: HandleFailedTaskInput = {
         task: task, // Pass the current task state, including its .retries count
         error: error,
       };
-      const failureDecision = decisionEngine.handleFailedTask(failureDecisionInput);
+      // handleFailedTask is now asynchronous, so await its result
+      const failureDecision = await decisionEngine.handleFailedTask(failureDecisionInput);
 
       console.log(`[TaskExecutor] DecisionEngine suggestion for task ${task.id} (after ${task.retries} previous retries): 
         Action: ${failureDecision.action}, 
