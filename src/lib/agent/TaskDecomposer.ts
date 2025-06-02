@@ -2,19 +2,29 @@ import { Mission, Task } from '@/lib/types/agent';
 import { GeminiClient } from '@/lib/search/GeminiClient';
 import { GeminiRequestParams } from '@/lib/types/search'; // Ensure this is imported for params
 
+import { LogLevel } from '@/lib/types/agent'; // For addLog type
+
 export class TaskDecomposer {
   private geminiClient: GeminiClient;
+  private addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
 
-  constructor(geminiApiKey: string) {
+  constructor(
+    geminiApiKey: string, 
+    addLogFunction: (entryData: { level: LogLevel; message: string; details?: any }) => void
+  ) {
     if (!geminiApiKey) {
+      // This error should ideally be logged before throwing if addLog is available,
+      // but constructor failure means we might not have it.
+      // Consider logging from the caller if constructor fails.
       throw new Error('Gemini API key is required for TaskDecomposer.');
     }
     this.geminiClient = new GeminiClient(geminiApiKey);
-    console.log('[TaskDecomposer] Initialized with GeminiClient.');
+    this.addLog = addLogFunction;
+    this.addLog({ level: 'info', message: '[TaskDecomposer] Initialized with GeminiClient.' });
   }
 
   async decomposeMission(mission: Mission): Promise<Task[]> {
-    console.log(`[TaskDecomposer] Decomposing mission with Gemini: "${mission.goal}" (ID: ${mission.id})`);
+    this.addLog({ level: 'info', message: `[TD] Decomposing mission: ${mission.id}`, details: { missionId: mission.id, goal: mission.goal } });
 
     // System prompt defining the expected behavior and JSON output format
     const systemPrompt = `You are an expert task decomposition AI. Your role is to break down a complex research mission into a series of actionable, distinct, and parallelizable sub-tasks.
@@ -47,21 +57,19 @@ ${userPrompt}`;
         prompt: fullPrompt,
         temperature: 0.3, // Lower temperature for more deterministic, structured output
         maxOutputTokens: 1024, // Adjust based on expected number of tasks / length of descriptions
-        // Consider adding stop sequences if the model tends to add extra text after JSON.
     };
 
     try {
+      this.addLog({ level: 'debug', message: `[TD] Sending prompt to LLM for task decomposition for mission ${mission.id}.`, details: { promptSummary: fullPrompt.substring(0, 250) + "..." } }); // Log fullPrompt summary
       const response = await this.geminiClient.generate(geminiParams);
       
-      // Assuming GeminiClient returns structure: response.candidates[0].content.parts[0].text
       const rawJsonResponse = response.candidates?.[0]?.content?.parts?.[0]?.text;
+      this.addLog({ level: 'debug', message: `[TD] Received LLM response for mission ${mission.id}.`, details: { summary: rawJsonResponse?.substring(0,150) } });
+
 
       if (!rawJsonResponse) {
-        console.error('[TaskDecomposer] No content received from Gemini API or unexpected response structure.');
-        throw new Error('No content from Gemini API or unexpected response structure.');
+        throw new Error(`No content from Gemini API or unexpected response structure for mission ${mission.id}.`);
       }
-      
-      console.log('[TaskDecomposer] Raw response from Gemini:', rawJsonResponse);
 
       // Attempt to clean the response if it's wrapped in markdown or has other artifacts
       let cleanedJson = rawJsonResponse.trim();
@@ -92,33 +100,31 @@ ${userPrompt}`;
         console.warn('[TaskDecomposer] Gemini returned an empty array of tasks for mission:', mission.goal);
         // Decide if this is an error or a valid case (e.g., mission too simple)
         // For now, let's treat it as potentially valid but return a specific fallback if needed by business logic
-        // Or, could throw an error here: throw new Error('Gemini returned no tasks.');
       }
 
-
-      return decomposedTaskDescriptions.map((taskDesc, index) => ({
-        id: `${mission.id}-task-${String(index + 1).padStart(3, '0')}`, // e.g., mission-xyz-task-001
+      const mappedTasks = decomposedTaskDescriptions.map((taskDesc, index) => ({
+        id: `${mission.id}-task-${String(index + 1).padStart(3, '0')}`, 
         missionId: mission.id,
         description: taskDesc.description,
         status: 'pending',
         retries: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
-        result: undefined, 
+        result: undefined,
       }));
+      
+      this.addLog({ level: 'info', message: `[TD] Mission ${mission.id} decomposed into ${mappedTasks.length} tasks.`}); // Added missing closing backtick
+      return mappedTasks;
 
-    } catch (error) {
-      console.error(`[TaskDecomposer] Error decomposing mission "${mission.goal}" with Gemini:`, error);
-      let errorMessage = 'Failed to decompose mission using LLM.';
-      if (error instanceof Error) {
-          errorMessage = error.message;
-      }
+    } catch (error: any) {
+      this.addLog({ level: 'error', message: `[TD] Error decomposing mission ${mission.id}: ${error.message}`, details: { missionId: mission.id, missionGoal: mission.goal, errorDetails: error } });
+      
       // Fallback to a single task indicating failure
       return [
         {
           id: `${mission.id}-task-fallback`,
           missionId: mission.id,
-          description: `Fallback: Could not decompose mission "${mission.goal}". Reason: ${errorMessage}`,
+          description: `Fallback: Could not decompose mission "${mission.goal}". Reason: ${error.message}`,
           status: 'pending', // Or 'failed' immediately if preferred
           retries: 0,
           createdAt: new Date(),

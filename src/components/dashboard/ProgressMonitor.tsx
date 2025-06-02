@@ -72,19 +72,21 @@ export function ProgressMonitor() {
             </p>
           )}
           
-          {activeTasks.length > 0 && (
-            <div className="mt-3">
-              <h4 className="font-semibold text-gray-700">Currently Active Tasks:</h4>
-              <ul className="list-disc list-inside pl-2 text-sm space-y-1 mt-1">
+          {/* Active Tasks Display Enhancement */}
+          <div className="mt-3">
+            <h4 className="font-semibold text-gray-700">Active Tasks ({activeTasks.length}):</h4>
+            {activeTasks.length > 0 ? (
+              <ul className="list-disc list-inside pl-2 text-sm space-y-0.5 max-h-24 overflow-y-auto pr-1 custom-scrollbar">
                 {activeTasks.map(task => (
-                  <li key={task.id} className="text-blue-600">
-                    {task.description} 
-                    <span className="text-xs text-gray-500 font-mono ml-1">(ID: {task.id})</span>
+                  <li key={task.id} className="text-blue-600 truncate" title={task.description}>
+                    {task.description} (ID: <span className="font-mono text-xs">{task.id.slice(-6)}</span>)
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
+            ) : (
+              <p className="text-sm text-gray-500 italic">No tasks currently in progress.</p>
+            )}
+          </div>
 
         </div>
       ) : (
@@ -93,17 +95,19 @@ export function ProgressMonitor() {
 
       <div className={`mt-4 pt-4 border-t border-gray-200 ${!mission ? 'mt-0 pt-0 border-none' : ''}`}>
         <h4 className="font-semibold text-gray-700 mb-1">Agent Status:</h4>
-        {agentState.isLoading && (
-            <p className="flex items-center text-yellow-600">
-                <svg className="animate-spin mr-2 h-4 w-4 text-yellow-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        {agentState.isLoading ? ( // Combined isLoading check
+            <div className="flex items-center text-yellow-600">
+                <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-yellow-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                Agent is busy...
-            </p>
+                Agent is busy... ({agentState.activeTasks.length > 0 ? `${agentState.activeTasks.length} active task(s)` : 'Initializing...'})
+            </div>
+        ) : agentState.error ? (
+            <p className="text-red-600 bg-red-50 p-2 rounded-md text-sm">Error: {agentState.error}</p>
+        ) : (
+            <p className="text-green-600">Agent is idle.</p>
         )}
-        {agentState.error && <p className="text-red-600 bg-red-50 p-2 rounded-md text-sm">Error: {agentState.error}</p>}
-        {!agentState.isLoading && !agentState.error && <p className="text-green-600">Agent is idle.</p>}
       </div>
     </div>
   );

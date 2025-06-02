@@ -23,10 +23,23 @@ export interface Task {
     originalError?: string; // Simplified original error message
     timestamp: Date; // When the failure was processed
   };
+  validationOutcome?: ValidationOutput; // Store the outcome of result validation
 }
 
 // Import FailedTaskAction at the top of the file or ensure it's resolvable
 import type { FailedTaskAction } from '@/lib/agent/DecisionEngine';
+import type { ValidationOutput } from '@/lib/search/ResultValidator';
+
+
+export type LogLevel = 'info' | 'error' | 'warn' | 'debug' | 'system';
+
+export interface LogEntry {
+  id: string; 
+  timestamp: Date;
+  level: LogLevel;
+  message: string;
+  details?: any; 
+}
 
 export interface AgentState {
   currentMissionId?: string;
