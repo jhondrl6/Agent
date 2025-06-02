@@ -39,6 +39,7 @@ export interface HandleFailedTaskOutput {
 }
 
 export class DecisionEngine {
+  public static readonly MAX_TASK_RETRIES = 3; // Max number of retries after initial failure
   // private llmClient: any; // Example for future LLM integration (e.g., GeminiClient)
 
   constructor(/* llmClient?: any */) {
@@ -131,7 +132,7 @@ export class DecisionEngine {
 
   public handleFailedTask(input: HandleFailedTaskInput): HandleFailedTaskOutput {
     const { task, error } = input;
-    const MAX_TASK_RETRIES = 3; // Define max retries, could be configurable at class/instance level
+    // MAX_TASK_RETRIES is now a class static readonly property
 
     let action: FailedTaskAction = 'abandon'; // Default to abandon
     let reason = 'Default: Unknown error or max retries exceeded.';
@@ -164,13 +165,13 @@ export class DecisionEngine {
         errorMessage.includes('tavily api rate limit exceeded') || // Specific for Tavily if it has unique message
         errorMessage.includes('gemini sdk error: 429') || // Specific for Gemini if SDK formats it this way
         (errorStatusCode === 429 || errorStatusCode === 503 || errorStatusCode === 504)) {
-      if (task.retries < MAX_TASK_RETRIES) {
+      if (task.retries < DecisionEngine.MAX_TASK_RETRIES) {
         action = 'retry';
         delayMs = 1000 * Math.pow(2, task.retries); // Exponential backoff: 1s, 2s, 4s
         reason = `Transient error detected ("${errorMessage}"). Suggesting retry #${task.retries + 1} after ${delayMs/1000}s.`;
       } else {
         action = 'abandon';
-        reason = `Transient error detected, but max retries (${MAX_TASK_RETRIES}) reached for task ${task.id}. Suggesting abandon. Original error: "${errorMessage}"`;
+        reason = `Transient error detected, but max retries (${DecisionEngine.MAX_TASK_RETRIES}) reached for task ${task.id}. Suggesting abandon. Original error: "${errorMessage}"`;
       }
     }
     // Rule 2: Configuration errors (e.g., invalid API key)
@@ -202,12 +203,12 @@ export class DecisionEngine {
         reason = `Task failed due to content safety restrictions by the LLM/API ("${errorMessage}"). Suggesting abandon.`;
     }
     // Rule 5: If retries are exhausted for any other reason not caught above
-    else if (task.retries >= MAX_TASK_RETRIES) {
+    else if (task.retries >= DecisionEngine.MAX_TASK_RETRIES) {
       action = 'abandon';
-      reason = `Max retries (${MAX_TASK_RETRIES}) reached for task ${task.id} with unclassified error. Suggesting abandon. Error: "${errorMessage}"`;
+      reason = `Max retries (${DecisionEngine.MAX_TASK_RETRIES}) reached for task ${task.id} with unclassified error. Suggesting abandon. Error: "${errorMessage}"`;
     }
     // Rule 6: Default for other errors with retries remaining (less common, but possible)
-    else if (task.retries < MAX_TASK_RETRIES) {
+    else if (task.retries < DecisionEngine.MAX_TASK_RETRIES) {
         action = 'retry';
         delayMs = 1000 * Math.pow(2, task.retries);
         reason = `Unclassified error ("${errorMessage}"), but retries remaining. Suggesting retry #${task.retries + 1} after ${delayMs/1000}s.`;

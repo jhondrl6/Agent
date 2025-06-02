@@ -207,32 +207,77 @@ export class TaskExecutor {
         Reason: "${failureDecision.reason}", 
         Delay: ${failureDecision.delayMs || 'N/A'}`);
 
-      // Update global agent error - include decision summary
-      storeActions.setAgentError(`Task ${task.id} ("${task.description.substring(0,50)}...") failed. Error: "${errorMessage.substring(0,100)}...". Suggested Action: ${failureDecision.action}.`);
-      
-      const failureDetailsObject = {
-        reason: failureDecision.reason, // This is the detailed reason from DecisionEngine
-        suggestedAction: failureDecision.action,
-        originalError: errorMessage, // The simplified original error message for this attempt
-        timestamp: new Date(),
-      };
+      // Log the initial error for this specific attempt
+      console.error(`[TaskExecutor] Error during task ${task.id} execution (Attempt details: ${task.retries} previous retries). Error: ${errorMessage}`, error);
 
-      // The task's status is 'failed'. The 'failureDecision.action' (e.g. 'retry') is advisory at this stage.
-      // The actual 'retries' count on the task object is NOT incremented here.
-      // It should be incremented only when a retry attempt is actually made by the orchestrator.
-      try {
-        storeActions.updateTask(missionId, task.id, { 
-          status: 'failed', // Status is definitely 'failed' for this attempt
-          result: `Task execution failed. See 'failureDetails' for more information.`, // Concise result
-          failureDetails: failureDetailsObject,
-          // retries: task.retries // Retries count is not modified here by TaskExecutor
+      const decisionEngine = new DecisionEngine();
+      const failureDecisionInput: HandleFailedTaskInput = {
+        task: task, // Pass the current task state, including its .retries count
+        error: error,
+      };
+      const failureDecision = decisionEngine.handleFailedTask(failureDecisionInput);
+
+      console.log(`[TaskExecutor] DecisionEngine suggestion for task ${task.id} (after ${task.retries} previous retries): 
+        Action: ${failureDecision.action}, 
+        Reason: "${failureDecision.reason}", 
+        Delay: ${failureDecision.delayMs || 'N/A'}`);
+
+      if (failureDecision.action === 'retry' && typeof failureDecision.delayMs === 'number') {
+        const retriesForNextAttempt = task.retries + 1;
+
+        setAgentError(`Task ${task.id} (attempt ${task.retries + 1}) failed. Retrying (will be attempt ${retriesForNextAttempt +1} of ${DecisionEngine.MAX_TASK_RETRIES +1} total attempts) after ${failureDecision.delayMs}ms. Error: ${errorMessage.substring(0,100)}...`);
+        
+        updateTask(missionId, task.id, {
+          status: 'retrying', // Indicate the task is in a retry delay period
+          retries: retriesForNextAttempt, // Update the count of retries made/decided
+          failureDetails: {
+            reason: failureDecision.reason, 
+            suggestedAction: 'retry',
+            originalError: errorMessage, // Error for the current failed attempt
+            timestamp: new Date(),
+          },
+          // result will remain from previous attempt or be empty
         });
-      } catch (storeUpdateError) {
-        console.error(`[TaskExecutor] CRITICAL: Failed to update task ${task.id} status to 'failed' with details in store after an execution error. Store error:`, storeUpdateError);
+
+        console.log(`[TaskExecutor] Task ${task.id} will be retried after ${failureDecision.delayMs}ms. New retry count: ${retriesForNextAttempt}.`);
+        await new Promise(resolve => setTimeout(resolve, failureDecision.delayMs));
+
+        const taskForNextExecution: Task = { 
+            ...task, 
+            retries: retriesForNextAttempt, // Carry forward the incremented retry count
+            status: 'pending', // Reset status for the new execution attempt
+            failureDetails: undefined, // Clear previous failure details for the new attempt
+            result: undefined, // Clear previous result
+        }; 
+        console.log(`[TaskExecutor] Re-executing task ${task.id} (This is Retry Attempt #${taskForNextExecution.retries} of ${DecisionEngine.MAX_TASK_RETRIES}).`);
+        // IMPORTANT: Recursive call, ensure the 'finally' block below correctly removes the *original* active task ID
+        // if this recursive call throws an error not caught internally by the next executeTask instance.
+        // However, executeTask is designed to catch its own errors.
+        // The finally block will remove the task ID upon completion of this entire chain.
+        return this.executeTask(missionId, taskForNextExecution); 
+      } else { 
+        // Decision is to abandon or other terminal action (e.g. re-plan, escalate - not handled yet)
+        const finalFailureReason = failureDecision.reason;
+        setAgentError(`Task ${task.id} failed permanently after ${task.retries} retries. Error: ${errorMessage.substring(0,100)}... Final Action: ${failureDecision.action}. Reason: ${finalFailureReason}`);
+        
+        updateTask(missionId, task.id, {
+          status: 'failed',
+          // task.retries already holds the number of retries that were made before this final decision
+          result: `Task failed after ${task.retries} ${task.retries === 1 ? 'retry' : 'retries'}. See 'failureDetails'.`,
+          failureDetails: {
+            reason: finalFailureReason, 
+            suggestedAction: failureDecision.action, 
+            originalError: errorMessage, // Error for the current (final) failed attempt
+            timestamp: new Date(),
+          },
+        });
       }
     } finally {
-      // This block executes whether the try succeeded or an error was caught and handled.
-      console.log(`[TaskExecutor] Removing task ${task.id} from active tasks list.`);
+      // This block executes whether the try succeeded OR if the catch block handled an error (and didn't recursively call and return early).
+      // If a retry is scheduled and executeTask is called recursively, this finally block for the *current* execution
+      // should still run to remove the current task instance from active list.
+      // The *new* execution instance will add itself to activeTasks.
+      console.log(`[TaskExecutor] Removing task ${task.id} (attempt with retries=${task.retries}) from active tasks list.`);
       removeTaskFromActive(task.id);
     }
   }
