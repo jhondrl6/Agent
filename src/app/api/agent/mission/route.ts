@@ -17,13 +17,14 @@ export async function POST(req: NextRequest) {
     const missionId = uuidv4();
 
     // 4. Instantiate the TaskDecomposer
-    //    Using a placeholder API key for OpenAI as it's mocked in TaskDecomposer
-    //    In a real scenario, this key should come from environment variables.
-    const openAiApiKeyPlaceholder = process.env.OPENAI_API_KEY || 'mock-openai-api-key-placeholder';
-    if (openAiApiKeyPlaceholder === 'mock-openai-api-key-placeholder') {
-        console.warn("[MissionRoute] Using a placeholder OpenAI API key for TaskDecomposer. Ensure OPENAI_API_KEY is set for actual use.");
+    // 4. Instantiate the TaskDecomposer with Gemini API Key
+    const geminiApiKey = process.env.GEMINI_API_KEY;
+    if (!geminiApiKey) {
+      console.error('[MissionRoute] Error: GEMINI_API_KEY is not defined in environment variables.');
+      // Return a 500 error as this is a server configuration issue
+      return NextResponse.json({ error: 'Server configuration error: Gemini API key is missing. Cannot decompose mission.' }, { status: 500 });
     }
-    const taskDecomposer = new TaskDecomposer(openAiApiKeyPlaceholder);
+    const taskDecomposer = new TaskDecomposer(geminiApiKey);
 
     // 5. Create a preliminary Mission object
     let newMission: Mission = {

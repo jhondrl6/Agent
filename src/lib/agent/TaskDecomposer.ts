@@ -1,120 +1,166 @@
 import { Mission, Task } from '@/lib/types/agent';
-
-// Placeholder for OpenAI API client (replace with actual implementation later)
-const openai = {
-  chat: {
-    completions: {
-      create: async (params: any): Promise<any> => {
-        console.log('[TaskDecomposer] OpenAI API call mocked:', params);
-        // Simulate a delay and a simple decomposition
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        // Extract missionId from the prompt content if possible, otherwise use a default
-        let missionId = 'unknown-mission';
-        if (params.messages && params.messages[1] && params.messages[1].content) {
-            const match = params.messages[1].content.match(/Mission ID: (\S+)/);
-            if (match && match[1]) {
-                missionId = match[1];
-            }
-        }
-        return {
-          choices: [
-            {
-              message: {
-                content: JSON.stringify([
-                  { id: 'task-1', description: 'First sub-task based on mission.', status: 'pending', retries: 0, missionId: missionId },
-                  { id: 'task-2', description: 'Second sub-task to achieve goal.', status: 'pending', retries: 0, missionId: missionId },
-                ]),
-              },
-            },
-          ],
-        };
-      },
-    },
-  },
-};
+import { GeminiClient } from '@/lib/search/GeminiClient';
+import { GeminiRequestParams } from '@/lib/types/search'; // Ensure this is imported for params
 
 export class TaskDecomposer {
-  constructor(private apiKey: string) {
-    if (!apiKey) {
-      throw new Error('OpenAI API key is required for TaskDecomposer.');
+  private geminiClient: GeminiClient;
+
+  constructor(geminiApiKey: string) {
+    if (!geminiApiKey) {
+      throw new Error('Gemini API key is required for TaskDecomposer.');
     }
-    // In a real scenario, you'd initialize your OpenAI client here
+    this.geminiClient = new GeminiClient(geminiApiKey);
+    console.log('[TaskDecomposer] Initialized with GeminiClient.');
   }
 
   async decomposeMission(mission: Mission): Promise<Task[]> {
-    console.log(`[TaskDecomposer] Decomposing mission: ${mission.goal} (ID: ${mission.id})`);
+    console.log(`[TaskDecomposer] Decomposing mission with Gemini: "${mission.goal}" (ID: ${mission.id})`);
 
-    const prompt = `
-      You are an expert task decomposition AI.
-      Given a research mission, break it down into a series of actionable, parallelizable tasks.
-      Return the tasks as a JSON array of objects, where each object has 'id', 'description', 'status', and 'missionId'.
-      Ensure tasks are granular enough to be executed independently.
+    // System prompt defining the expected behavior and JSON output format
+    const systemPrompt = `You are an expert task decomposition AI. Your role is to break down a complex research mission into a series of actionable, distinct, and parallelizable sub-tasks.
 
-      Mission: "${mission.goal}"
-      Mission ID: ${mission.id}
-    `;
+Return the tasks as a valid JSON array of objects. Each object in the array must have ONLY a "description" field detailing the sub-task.
+Do NOT include any other fields like id, status, etc.
+Do NOT output markdown (e.g., \`\`\`json ... \`\`\`). Output only the raw JSON array.
+
+Example Input Mission: "Research the impact of AI on climate change."
+Example Output JSON:
+[
+  {"description": "Identify key areas where AI intersects with climate change (e.g., energy, agriculture, monitoring)."},
+  {"description": "Search for recent scientific papers and reports on AI applications in climate change mitigation."},
+  {"description": "Analyze data on the carbon footprint of AI model training and inference."},
+  {"description": "Investigate policy recommendations for leveraging AI to combat climate change."},
+  {"description": "Synthesize findings into a summary report."}
+]`;
+
+    const userPrompt = `Mission: "${mission.goal}"`;
+
+    // Combine system and user prompts into a single string for the current GeminiClient structure
+    const fullPrompt = `${systemPrompt}
+
+Okay, now decompose the following user request. Ensure your output is ONLY the JSON array as specified.
+
+User Request:
+${userPrompt}`;
+    
+    const geminiParams: GeminiRequestParams = {
+        prompt: fullPrompt,
+        temperature: 0.3, // Lower temperature for more deterministic, structured output
+        maxOutputTokens: 1024, // Adjust based on expected number of tasks / length of descriptions
+        // Consider adding stop sequences if the model tends to add extra text after JSON.
+    };
 
     try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo', // Or your preferred model
-        messages: [
-          { role: 'system', content: 'You are an expert task decomposition AI.' },
-          { role: 'user', content: prompt },
-        ],
-        // response_format: { type: "json_object" }, // If using models that support JSON output and the SDK version supports it
-      });
+      const response = await this.geminiClient.generate(geminiParams);
+      
+      // Assuming GeminiClient returns structure: response.candidates[0].content.parts[0].text
+      const rawJsonResponse = response.candidates?.[0]?.content?.parts?.[0]?.text;
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) {
-        throw new Error('No content received from OpenAI API.');
+      if (!rawJsonResponse) {
+        console.error('[TaskDecomposer] No content received from Gemini API or unexpected response structure.');
+        throw new Error('No content from Gemini API or unexpected response structure.');
+      }
+      
+      console.log('[TaskDecomposer] Raw response from Gemini:', rawJsonResponse);
+
+      // Attempt to clean the response if it's wrapped in markdown or has other artifacts
+      let cleanedJson = rawJsonResponse.trim();
+      if (cleanedJson.startsWith('```json')) {
+        cleanedJson = cleanedJson.substring(7);
+      } else if (cleanedJson.startsWith('```')) {
+        cleanedJson = cleanedJson.substring(3);
+      }
+      if (cleanedJson.endsWith('```')) {
+        cleanedJson = cleanedJson.substring(0, cleanedJson.length - 3);
+      }
+      cleanedJson = cleanedJson.trim(); // Trim again after potential markdown removal
+
+      // Validate if the cleaned string is likely JSON before parsing
+      if (!cleanedJson.startsWith('[') || !cleanedJson.endsWith(']')) {
+          console.error('[TaskDecomposer] Cleaned response does not appear to be a JSON array:', cleanedJson);
+          throw new Error('Gemini response is not a valid JSON array after cleaning.');
       }
 
-      // Assuming content is a JSON string array of partial tasks
-      const decomposedTasksInput = JSON.parse(content) as Partial<Omit<Task, 'createdAt' | 'updatedAt' | 'missionId' | 'id' | 'retries'>>[];
+      const decomposedTaskDescriptions = JSON.parse(cleanedJson) as { description: string }[];
+
+      if (!Array.isArray(decomposedTaskDescriptions) || !decomposedTaskDescriptions.every(t => t && typeof t.description === 'string')) {
+          console.error('[TaskDecomposer] Parsed JSON is not in the expected format (array of {description: string}). Parsed:', decomposedTaskDescriptions);
+          throw new Error('Gemini response not in the expected task description format after parsing.');
+      }
+      
+      if (decomposedTaskDescriptions.length === 0) {
+        console.warn('[TaskDecomposer] Gemini returned an empty array of tasks for mission:', mission.goal);
+        // Decide if this is an error or a valid case (e.g., mission too simple)
+        // For now, let's treat it as potentially valid but return a specific fallback if needed by business logic
+        // Or, could throw an error here: throw new Error('Gemini returned no tasks.');
+      }
 
 
-      return decomposedTasksInput.map((taskInput, index) => ({
-        id: `${mission.id}-task-${index + 1}`, // Ensure unique task IDs
+      return decomposedTaskDescriptions.map((taskDesc, index) => ({
+        id: `${mission.id}-task-${String(index + 1).padStart(3, '0')}`, // e.g., mission-xyz-task-001
         missionId: mission.id,
-        description: taskInput.description || `Task ${index + 1} for ${mission.goal}`,
+        description: taskDesc.description,
         status: 'pending',
-        result: undefined,
         retries: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
+        result: undefined, 
       }));
 
     } catch (error) {
-      console.error('[TaskDecomposer] Error decomposing mission:', error);
-      // Fallback to a simple task if decomposition fails
+      console.error(`[TaskDecomposer] Error decomposing mission "${mission.goal}" with Gemini:`, error);
+      let errorMessage = 'Failed to decompose mission using LLM.';
+      if (error instanceof Error) {
+          errorMessage = error.message;
+      }
+      // Fallback to a single task indicating failure
       return [
         {
           id: `${mission.id}-task-fallback`,
           missionId: mission.id,
-          description: `Fallback task for: ${mission.goal}`,
-          status: 'pending',
-          result: undefined,
+          description: `Fallback: Could not decompose mission "${mission.goal}". Reason: ${errorMessage}`,
+          status: 'pending', // Or 'failed' immediately if preferred
           retries: 0,
           createdAt: new Date(),
           updatedAt: new Date(),
+          result: undefined,
         },
       ];
     }
   }
 }
 
-// Example Usage (for testing purposes, remove later)
+// Example Usage (for conceptual testing - ensure GEMINI_API_KEY is set in .env)
 /*
-async function testDecomposition() {
-  const decomposer = new TaskDecomposer('test-api-key'); // Replace with your actual API key for real tests
+async function testRealDecomposition() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error("GEMINI_API_KEY is not set for TaskDecomposer test.");
+    return;
+  }
+  const decomposer = new TaskDecomposer(apiKey);
   const sampleMission: Mission = {
-    id: 'mission-001',
-    goal: 'Research the impact of AI on climate change.',
+    id: 'mission-gemini-002',
+    goal: 'Develop a comprehensive marketing strategy for a new sustainable coffee brand.',
     tasks: [],
     status: 'pending',
+    createdAt: new Date(),
+    updatedAt: new Date(),
   };
-  const tasks = await decomposer.decomposeMission(sampleMission);
-  console.log('[TaskDecomposer] Decomposed tasks:', tasks);
+  try {
+    console.log(`[TaskDecomposer Test] Decomposing mission: "${sampleMission.goal}"`);
+    const tasks = await decomposer.decomposeMission(sampleMission);
+    console.log('[TaskDecomposer Test] Decomposed tasks:', JSON.stringify(tasks, null, 2));
+    if (tasks.length > 0 && tasks[0].id.includes('fallback')) {
+        console.warn("[TaskDecomposer Test] Decomposition resulted in a fallback task.");
+    } else if (tasks.length === 0) {
+        console.warn("[TaskDecomposer Test] Decomposition resulted in zero tasks.");
+    } else {
+        console.log(`[TaskDecomposer Test] Successfully decomposed into ${tasks.length} tasks.`);
+    }
+  } catch (e) {
+      console.error("[TaskDecomposer Test] Error during test:", e)
+  }
 }
-testDecomposition();
+// testRealDecomposition();
 */

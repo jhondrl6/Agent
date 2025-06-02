@@ -1,123 +1,134 @@
 // src/lib/agent/TaskExecutor.ts
 import { Task } from '@/lib/types/agent';
 import { useAgentStore } from './StateManager'; 
+import { TavilyClient } from '@/lib/search/TavilyClient';
+import { TavilySearchParams, TavilySearchResponse } from '@/lib/types/search';
 
 export class TaskExecutor {
-  // No need to store the hook if we call useAgentStore.getState() directly inside methods
-  // This avoids potential issues with hook rules if the class instance lifetime is complex.
 
   constructor() {
     console.log('[TaskExecutor] Initialized');
-    // In a more complex scenario, you might pass dependencies here
+  }
+
+  private extractSearchQuery(description: string, keywords: string[]): string {
+    const descriptionLower = description.toLowerCase();
+    for (const keyword of keywords) {
+      const keywordWithSpace = keyword + " ";
+      let keywordIndex = descriptionLower.indexOf(keywordWithSpace);
+      
+      // Check if keyword is at the beginning
+      if (keywordIndex === 0) {
+        return description.substring(keywordWithSpace.length).trim();
+      }
+      
+      // Check if keyword is elsewhere but clearly delimited (e.g. "perform a search for X")
+      // This part can be tricky and might need more sophisticated NLP or regex
+      // For now, we'll stick to simpler prefix stripping or use the whole description if keyword is just "present"
+      // A simple approach if keyword is just "present" (and not at start) might be to take text after it.
+      // However, "research X" is different from "perform research for X".
+      // Let's assume for now if a keyword is present, the most significant part of the query follows it.
+      // This is a placeholder for more advanced query extraction.
+      if (keywordIndex > 0) {
+          // A more robust approach might look for the keyword and take the rest of the string
+          // e.g. if task is "Review findings and then research impacts of X"
+          // we want "impacts of X", not "review findings and then research impacts of X"
+          // This naive approach will take everything after the first found keyword.
+          return description.substring(keywordIndex + keywordWithSpace.length).trim();
+      }
+    }
+    // If no specific keyword prefix is found, but task is identified as search,
+    // the whole description might be the query, or it implies a general research task.
+    // For now, let's return the original description if no keyword is stripped.
+    // This means "research climate change" will use "climate change" if "research" is stripped.
+    // "climate change research" would use "climate change research" if "research" isn't a prefix.
+    return description; 
   }
 
   public async executeTask(missionId: string, task: Task): Promise<void> {
-    // Access store's methods directly via getState() when needed.
-    // This ensures we are getting the latest state and actions without managing a store instance member.
     const storeActions = useAgentStore.getState();
     
     console.log(`[TaskExecutor] Attempting execution for task: ${task.id} - "${task.description}" under mission ${missionId}`);
+    storeActions.updateTask(missionId, task.id, { status: 'in-progress' });
+    console.log(`[TaskExecutor] Task ${task.id} status updated to 'in-progress'.`);
 
     try {
-      // 1. Update task status to 'in-progress'
-      // Ensure that the task object passed to updateTask contains all necessary fields or that updateTask handles partials correctly.
-      // The current updateTask in StateManager expects Partial<Omit<Task, 'id' | 'missionId' | 'createdAt'>>
-      storeActions.updateTask(missionId, task.id, { status: 'in-progress' }); // updatedAt will be set by updateTask
-      console.log(`[TaskExecutor] Task ${task.id} status updated to 'in-progress'.`);
+      const descriptionLower = task.description.toLowerCase();
+      const searchKeywords = ["search for", "find information on", "find information about", "research", "look up", "investigate"];
+      // A task is a search task if *any* part of its description contains these keywords.
+      // This is a broad heuristic.
+      const isSearchTask = searchKeywords.some(keyword => descriptionLower.includes(keyword));
 
-      // 2. Simulate task execution (e.g., API call, processing)
-      // This could involve calls to other services like Tavily, Gemini, etc.
-      // For now, it's a simple timeout.
-      const executionTime = Math.random() * 2000 + 1000; // Simulate 1-3 seconds of work
-      console.log(`[TaskExecutor] Task ${task.id} simulating work for ${executionTime.toFixed(0)}ms.`);
-      await new Promise(resolve => setTimeout(resolve, executionTime));
+      if (isSearchTask) {
+        console.log(`[TaskExecutor] Task ${task.id} identified as a search task.`);
+        const apiKey = process.env.TAVILY_API_KEY;
+        if (!apiKey) {
+          console.error('[TaskExecutor] Tavily API key (TAVILY_API_KEY) is not configured.');
+          storeActions.updateTask(missionId, task.id, { status: 'failed', result: 'Configuration error: Tavily API key not found.' });
+          storeActions.setAgentError('Tavily API key not configured. Please set TAVILY_API_KEY.');
+          return;
+        }
 
-      // 3. Simulate outcome
-      const isSuccess = Math.random() > 0.2; // 80% chance of success for placeholder
+        let query = this.extractSearchQuery(task.description, searchKeywords);
+        // If extraction results in empty query, fallback to full description or a part of it.
+        if (!query.trim()) {
+            console.warn(`[TaskExecutor] Query extraction for task "${task.description}" resulted in an empty query. Falling back to full description.`);
+            query = task.description;
+        }
+        console.log(`[TaskExecutor] Extracted query for Tavily: "${query}"`);
 
-      if (isSuccess) {
-        const mockResult = `Successfully executed: ${task.description}. Found relevant data. More details: Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
-        console.log(`[TaskExecutor] Task ${task.id} completed successfully.`);
-        storeActions.updateTask(missionId, task.id, { 
-          status: 'completed', 
-          result: mockResult,
-          // `updatedAt` is handled by `updateTask` in the store
-        });
+        const tavilyClient = new TavilyClient(apiKey);
+        // TODO: Make search_depth and max_results configurable, possibly from the task itself if specified by decomposer
+        const searchParams: TavilySearchParams = { query, search_depth: 'basic', max_results: 5, include_answer: true }; 
+        
+        const tavilyResponse = await tavilyClient.search(searchParams);
+
+        if (tavilyResponse && (tavilyResponse.answer || (tavilyResponse.results && tavilyResponse.results.length > 0))) {
+          let formattedResults = "";
+          if (tavilyResponse.answer) {
+            formattedResults += `Tavily Answer: ${tavilyResponse.answer}\n\n`;
+          }
+          if (tavilyResponse.results && tavilyResponse.results.length > 0) {
+            formattedResults += "Search Results:\n" + tavilyResponse.results.map(
+              (res, idx) => `${idx+1}. ${res.title}\n   URL: ${res.url}\n   Snippet: ${res.content.substring(0, 250)}...\n`
+            ).join('\n');
+          }
+          console.log(`[TaskExecutor] Task ${task.id} (Tavily Search) completed successfully.`);
+          storeActions.updateTask(missionId, task.id, { 
+            status: 'completed', 
+            result: formattedResults.trim(),
+          });
+        } else {
+          console.warn(`[TaskExecutor] Task ${task.id} (Tavily Search) returned no meaningful results or an error occurred internally in client.`);
+          storeActions.updateTask(missionId, task.id, { 
+            status: 'failed', 
+            result: 'Tavily Search returned no results or an internal error occurred.',
+          });
+        }
       } else {
-        const failureReason = 'Simulated failure: API endpoint returned an error or data processing failed.';
-        console.warn(`[TaskExecutor] Task ${task.id} failed. Reason: ${failureReason}`);
-        storeActions.updateTask(missionId, task.id, { 
-          status: 'failed', 
-          result: failureReason,
-          // `updatedAt` is handled by `updateTask` in the store
-        });
-        // In a real system, you might want to check task.retries and potentially set to 'retrying'
-        // if task.retries < MAX_RETRIES. This logic would be part of a more complex DecisionEngine/Orchestrator.
+        // Existing simulation logic for non-search tasks
+        console.log(`[TaskExecutor] Task ${task.id} is not a search task. Using simulation.`);
+        const executionTime = Math.random() * 1500 + 500; // 0.5-2 seconds
+        await new Promise(resolve => setTimeout(resolve, executionTime));
+        const isSuccess = Math.random() > 0.2; // 80% chance of success
+
+        if (isSuccess) {
+          storeActions.updateTask(missionId, task.id, { status: 'completed', result: `Simulated success for: ${task.description}. Lorem ipsum dolor sit amet.` });
+        } else {
+          storeActions.updateTask(missionId, task.id, { status: 'failed', result: `Simulated failure for: ${task.description}. Operation did not complete as expected.` });
+        }
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error during task execution.';
-      console.error(`[TaskExecutor] Critical error executing task ${task.id}:`, errorMessage);
-      
-      // Use setAgentError from the store for global error feedback
-      storeActions.setAgentError(`Task ${task.id} execution failed: ${errorMessage}`);
-      
+      console.error(`[TaskExecutor] Error executing task ${task.id}:`, errorMessage);
+      storeActions.setAgentError(`Failed to execute task ${task.id}: ${errorMessage}`);
       try {
-        // Attempt to update the task status to 'failed' even if an unexpected error occurred
         storeActions.updateTask(missionId, task.id, { 
           status: 'failed', 
           result: `Execution error: ${errorMessage}`,
-          // `updatedAt` is handled by `updateTask` in the store
         });
       } catch (storeUpdateError) {
         console.error(`[TaskExecutor] CRITICAL: Failed to update task ${task.id} status to 'failed' in store after an execution error. Store error:`, storeUpdateError);
-        // This is a severe situation. The application state might be inconsistent.
-        // Consider more robust recovery or logging mechanisms here for production.
       }
     }
   }
 }
-
-// Example of how it might be instantiated and used elsewhere (for conceptualization only):
-/*
-async function runExample() {
-  const executor = new TaskExecutor();
-  
-  // Mock mission and task for the example
-  const missionIdExample = "mission-example-123";
-  const taskExample: Task = {
-    id: "task-example-001",
-    missionId: missionIdExample,
-    description: "Test task execution flow",
-    status: 'pending',
-    retries: 0,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    result: null,
-  };
-
-  // You'd typically get the mission and task from the store or props
-  // For this example, we'll simulate adding it to the store first so updateTask can find it.
-  const { createMission, addTask } = useAgentStore.getState();
-  createMission({ 
-    id: missionIdExample, 
-    goal: "Test Mission Execution", 
-    tasks: [], 
-    status: 'pending', 
-    createdAt: new Date(), 
-    updatedAt: new Date() 
-  });
-  addTask(missionIdExample, taskExample);
-
-  console.log(`[TaskExecutor Example] Executing task ${taskExample.id} for mission ${missionIdExample}`);
-  await executor.executeTask(missionIdExample, taskExample);
-  console.log(`[TaskExecutor Example] Finished execution attempt for task ${taskExample.id}. Check store for status.`);
-
-  const finalTaskState = useAgentStore.getState().missions[missionIdExample]?.tasks.find(t => t.id === taskExample.id);
-  console.log("[TaskExecutor Example] Final task state in store:", finalTaskState);
-}
-
-// To run this example:
-// 1. Ensure your environment is set up (e.g., Next.js dev server running if this were part of a UI interaction)
-// 2. Uncomment the line below. You might need to place this in a context where hooks can be called if you weren't using getState().
-// runExample();
-*/

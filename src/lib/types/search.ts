@@ -1,49 +1,66 @@
 // In src/lib/types/search.ts
 
-export interface TavilySearchRequest {
+export interface TavilySearchParams { // Renamed from TavilySearchRequest
   query: string;
-  search_depth?: 'basic' | 'advanced';
-  include_answer?: boolean;
-  include_raw_content?: boolean;
+  search_depth?: "basic" | "advanced";
+  include_answer?: boolean; // Keep if useful
+  include_raw_content?: boolean; // Keep if useful
   max_results?: number;
-  // Add other Tavily-specific parameters if needed
+  include_domains?: string[]; // Added from prompt example
+  exclude_domains?: string[]; // Added from prompt example
+  // other relevant Tavily params
 }
 
-export interface TavilySearchResult {
+export interface TavilySearchResultItem { // Renamed from TavilySearchResult
   title: string;
   url: string;
-  content: string;
-  score?: number;
-  raw_content?: string;
-  // Add other fields from Tavily response if needed
+  content: string; // This is often the main snippet or summary
+  score: number; // Tavily provides this
+  raw_content?: string; // If requested and useful
+  // other fields provided by Tavily
 }
 
 export interface TavilySearchResponse {
-  answer?: string;
-  query?: string;
+  query?: string; // The original query
+  answer?: string; // If include_answer was true
   response_time?: number;
-  results: TavilySearchResult[];
+  results: TavilySearchResultItem[];
+  // other summary fields
 }
 
-
-export interface SerperSearchRequest {
-  q: string;
-  num?: number; // Number of results
-  page?: number;
-  // Add other Serper-specific parameters
+// Serper Types
+export interface SerperSearchParams {
+  q: string; // Query
+  num?: number; // Number of results (e.g., 10, 20, 30)
+  page?: number; // Page number for pagination
+  location?: string; // Location for search, e.g., "Austin, Texas, United States"
+  gl?: string; // Geolocation (country code, e.g., "US")
+  hl?: string; // Host language (e.g., "en" for English)
+  autocorrect?: boolean;
+  type?: 'search' | 'images' | 'news' | 'videos'; // Type of search
+  // other relevant Serper params
 }
 
-export interface SerperSearchResult {
+export interface SerperSearchResultItem {
   title: string;
   link: string;
   snippet: string;
   position?: number;
-  // Add other fields from Serper response
+  source?: string; // e.g., "www.example.com"
+  imageUrl?: string; // For image results
+  // other fields like attributes, sitelinks, etc.
 }
 
 export interface SerperSearchResponse {
-  organic: SerperSearchResult[];
-  // Add other fields like relatedSearches, etc.
+  searchParameters?: { // Serper often includes the parameters used
+    q: string;
+    type: string;
+    // ... and others
+  };
+  organic: SerperSearchResultItem[]; // Main search results
+  relatedSearches?: Array<{ query: string }>;
+  knowledgeGraph?: { title: string; type: string; description: string; imageUrl?: string; [key: string]: any };
+  // other potential fields like answerBox, videos, images, news etc.
 }
 
 
@@ -73,8 +90,8 @@ export interface SearchParams {
   query: string;
   provider: SearchProvider;
   // Add other common parameters, or use a union type for provider-specific params
-  tavilyParams?: Omit<TavilySearchRequest, 'query'>;
-  serperParams?: Omit<SerperSearchRequest, 'q'>;
+  tavilyParams?: Omit<TavilySearchParams, 'query'>; 
+  serperParams?: Omit<SerperSearchParams, 'q'>; // Updated reference
   geminiParams?: Omit<GeminiRequestParams, 'prompt'>;
 }
 
