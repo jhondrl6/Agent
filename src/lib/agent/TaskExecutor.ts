@@ -220,8 +220,8 @@ export class TaskExecutor {
         task: task, // Pass the current task state, including its .retries count
         error: error,
       };
-      // handleFailedTask is currently synchronous, but good practice to be mindful if it becomes async
-      const failureDecision = decisionEngine.handleFailedTask(failureDecisionInput);
+      // handleFailedTask is now asynchronous, so await its result
+      const failureDecision = await decisionEngine.handleFailedTask(failureDecisionInput);
 
       console.log(`[TaskExecutor] DecisionEngine suggestion for task ${task.id} (after ${task.retries} previous retries): 
         Action: ${failureDecision.action}, 

@@ -216,10 +216,114 @@ ${userPrompt}`;
     return { provider: chosenProviderByRules, reason: reasonByRules };
   }
 
-  public handleFailedTask(input: HandleFailedTaskInput): HandleFailedTaskOutput {
+  public async handleFailedTask(input: HandleFailedTaskInput): Promise<HandleFailedTaskOutput> { // Made async
     const { task, error } = input;
-    // MAX_TASK_RETRIES is now a class static readonly property
+    const errorMessage = typeof error === 'string' ? error.toLowerCase() : (error?.message || 'Unknown error').toLowerCase();
+    const errorStack = typeof error !== 'string' && error?.stack ? error.stack : 'No stack available.';
+    const errorStatusCode = (typeof error === 'object' && error !== null && 'status' in error) ? (error as any).status : undefined;
 
+
+    if (this.useLLMForDecisions && this.geminiClient) {
+      console.log(`[DecisionEngine] Attempting to use LLM to handle failure for task ${task.id}: "${task.description}"`);
+
+      const availableActions: FailedTaskAction[] = ['retry', 'abandon', 're-plan', 'escalate'];
+      const actionsString = availableActions.join("', '"); // For prompt construction
+
+      // Prepare context about past failures for this task, if any
+      let failureHistoryContext = "";
+      if (task.failureDetails && task.failureDetails.originalError) {
+          failureHistoryContext = `The task previously failed with: "${task.failureDetails.originalError}". Suggested action then was: ${task.failureDetails.suggestedAction || 'N/A'}. This is retry number ${task.retries} (0-indexed).`;
+      } else if (task.retries > 0) {
+          failureHistoryContext = `This is retry number ${task.retries} (0-indexed) for this task. Previous attempts also failed.`;
+      }
+
+
+      const systemPrompt = `You are an expert AI system diagnosing task failures for a research agent.
+Your goal is to analyze the failed task, the error message, and suggest the best course of action.
+Available actions are: '${actionsString}'.
+
+Consider the following when making your decision:
+- 'retry': Choose if the error seems transient (network issues, temporary API unavailability, rate limits like 429) and the task has not exceeded max retries (max is ${DecisionEngine.MAX_TASK_RETRIES} retries, meaning ${DecisionEngine.MAX_TASK_RETRIES + 1} total attempts). If suggesting 'retry', also suggest a 'delayMs' (e.g., 1000 for 1st retry, 2000 for 2nd, 4000 for 3rd based on retry count).
+- 'abandon': Choose if the error is persistent (invalid API key (401/403), fatal error, content safety block, malformed request (400), or if max retries are met).
+- 're-plan': Choose if the task itself seems ill-defined, too broad, or if the error suggests the approach needs fundamental rethinking. This might involve breaking the task down further or changing its goal.
+- 'escalate': Choose for critical, unrecoverable system errors or if human intervention is clearly needed (rarely use this).
+
+Analyze the following failed task details and recommend an action.
+Return your choice as a VALID JSON object with three keys:
+1. "action" (string, must be one of: '${actionsString}')
+2. "reason" (string, a brief explanation for your choice and diagnosis)
+3. "delayMs" (number, an optional integer, REQUIRED and > 0 if action is 'retry'. Otherwise, it can be omitted or null.)
+Do NOT output markdown (e.g., \`\`\`json ... \`\`\`). Output only the raw JSON object.
+
+Max retries for a task (number of times it can be retried after the first failure) is ${DecisionEngine.MAX_TASK_RETRIES}. Current retry count for this task (number of past failures/retry attempts made): ${task.retries}.
+`;
+
+      const userPrompt = `Failed Task:
+ID: ${task.id}
+Description: "${task.description}"
+Status at failure: ${task.status} 
+Retries so far: ${task.retries} 
+Error Message: "${errorMessage}"
+Error Status Code (if applicable): ${errorStatusCode || 'N/A'}
+Error Stack (if available): ${errorStack}
+${failureHistoryContext ? `Failure History Context: ${failureHistoryContext}` : ""}
+`;
+      const fullPrompt = `${systemPrompt}
+
+Okay, analyze the following failed task.
+
+${userPrompt}`;
+
+      try {
+        const geminiParams: GeminiRequestParams = { prompt: fullPrompt, temperature: 0.3, maxOutputTokens: 250 }; // Increased maxOutputTokens slightly
+        const response = await this.geminiClient.generate(geminiParams);
+        const rawJsonResponse = response.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (rawJsonResponse) {
+          console.log('[DecisionEngine] Raw JSON response from LLM for failure handling:', rawJsonResponse);
+          let cleanedJson = rawJsonResponse.trim();
+          if (cleanedJson.startsWith('```json')) cleanedJson = cleanedJson.substring(7).trim();
+          if (cleanedJson.endsWith('```')) cleanedJson = cleanedJson.substring(0, cleanedJson.length - 3).trim();
+          
+          const llmChoice = JSON.parse(cleanedJson) as { action: string; reason: string; delayMs?: number };
+
+          if (llmChoice && typeof llmChoice.action === 'string' && typeof llmChoice.reason === 'string') {
+            const action = llmChoice.action.toLowerCase() as FailedTaskAction;
+            if (availableActions.includes(action)) {
+              let delay = llmChoice.delayMs;
+              if (action === 'retry') {
+                if (task.retries >= DecisionEngine.MAX_TASK_RETRIES) {
+                    console.warn(`[DecisionEngine] LLM suggested retry for task ${task.id}, but it has already reached max retries (${task.retries}/${DecisionEngine.MAX_TASK_RETRIES}). Overriding to 'abandon'. LLM Reason: ${llmChoice.reason}`);
+                    return { action: 'abandon', reason: `LLM suggested retry, but max retries reached. LLM Reason: ${llmChoice.reason}`, delayMs: undefined };
+                }
+                if (typeof delay !== 'number' || delay <= 0) {
+                  console.warn(`[DecisionEngine] LLM suggested retry for task ${task.id} but provided invalid delayMs (${delay}). Defaulting to exponential backoff.`);
+                  delay = 1000 * Math.pow(2, task.retries); 
+                }
+              } else {
+                  delay = undefined; // Ensure delay is undefined if not a retry action
+              }
+              
+              console.log(`[DecisionEngine] LLM handled failure for task ${task.id}: Action: ${action}, Reason: ${llmChoice.reason}, Delay: ${delay}`);
+              return { action, reason: `LLM Decision: ${llmChoice.reason}`, delayMs: delay };
+            } else {
+              console.warn(`[DecisionEngine] LLM chose invalid action "${action}" for task ${task.id}. Falling back to rules.`);
+            }
+          } else {
+            console.warn(`[DecisionEngine] LLM response for failure handling (task ${task.id}) was not in the expected format. Falling back to rules. Response:`, llmChoice);
+          }
+        } else {
+          console.warn(`[DecisionEngine] No content received from LLM for failure handling (task ${task.id}). Falling back to rules.`);
+        }
+      } catch (llmError) {
+        console.error(`[DecisionEngine] Error using LLM for failure handling (task ${task.id}), falling back to rules. Error:`, llmError);
+      }
+    }
+
+
+    // Fallback to rule-based logic
+    console.log(`[DecisionEngine] Using rule-based logic to handle failure for task ${task.id}`);
+    // Note: errorMessage and errorStatusCode are already defined above.
     let action: FailedTaskAction = 'abandon'; // Default to abandon
     let reason = 'Default: Unknown error or max retries exceeded.';
     let delayMs: number | undefined = undefined;
