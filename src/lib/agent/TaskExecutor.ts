@@ -35,13 +35,25 @@ export class TaskExecutor {
   }
 
   public async executeTask(missionId: string, task: Task): Promise<void> {
-    const storeActions = useAgentStore.getState();
+    const { 
+      updateTask, 
+      setAgentError, 
+      addTaskToActive,
+      removeTaskFromActive 
+    } = useAgentStore.getState();
     
-    console.log(`[TaskExecutor] Attempting execution for task: ${task.id} - "${task.description}" under mission ${missionId}`);
-    storeActions.updateTask(missionId, task.id, { status: 'in-progress' });
-    console.log(`[TaskExecutor] Task ${task.id} status updated to 'in-progress'.`);
-
     try {
+      console.log(`[TaskExecutor] Adding task ${task.id} to active tasks list.`);
+      addTaskToActive(task.id);
+
+      console.log(`[TaskExecutor] Attempting execution for task: ${task.id} - "${task.description}" under mission ${missionId}`);
+      // It's important to update the status to 'in-progress' AFTER adding to activeTasks,
+      // or ensure both are part of a single conceptual state update if possible.
+      // For UI reactivity, having it in activeTasks then seeing status change might be fine.
+      updateTask(missionId, task.id, { status: 'in-progress' });
+      console.log(`[TaskExecutor] Task ${task.id} status updated to 'in-progress'.`);
+
+      // Main task execution logic starts here
       const descriptionLower = task.description.toLowerCase();
       // Keywords to identify if it's a search task AND for query extraction
       const searchKeywords = ["search for", "find information on", "find information about", "research", "look up", "investigate", "google search for", "serper search for", "tavily search for"];
@@ -218,6 +230,10 @@ export class TaskExecutor {
       } catch (storeUpdateError) {
         console.error(`[TaskExecutor] CRITICAL: Failed to update task ${task.id} status to 'failed' with details in store after an execution error. Store error:`, storeUpdateError);
       }
+    } finally {
+      // This block executes whether the try succeeded or an error was caught and handled.
+      console.log(`[TaskExecutor] Removing task ${task.id} from active tasks list.`);
+      removeTaskFromActive(task.id);
     }
   }
 }

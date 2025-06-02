@@ -17,6 +17,8 @@ interface StoreActions {
   setAgentLoading: (isLoading: boolean) => void;
   setAgentError: (error?: string) => void;
   setCurrentMissionId: (missionId?: string) => void;
+  addTaskToActive: (taskId: string) => void;
+  removeTaskFromActive: (taskId: string) => void;
   // Potentially add more actions as needed
 }
 
@@ -139,10 +141,44 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
     set((state) => ({ agentState: { ...state.agentState, isLoading } })),
 
   setAgentError: (error) =>
-    set((state) => ({ agentState: { ...state.agentState, error, isLoading: false } })), // Set isLoading to false on error
+    set((state) => ({
+      agentState: {
+        ...state.agentState,
+        error,
+        // isLoading is managed by activeTasks count. An error in one task doesn't mean all stop loading.
+        // If a critical error requires stopping all activity, it should also clear activeTasks.
+      },
+    })),
 
   setCurrentMissionId: (missionId) =>
     set((state) => ({ agentState: { ...state.agentState, currentMissionId: missionId } })),
+  
+  addTaskToActive: (taskId) =>
+    set((state) => {
+      if (!state.agentState.activeTasks.includes(taskId)) {
+        return {
+          agentState: {
+            ...state.agentState,
+            activeTasks: [...state.agentState.activeTasks, taskId],
+            isLoading: true, // Set loading to true when a task becomes active
+          },
+        };
+      }
+      // If task is already active, ensure isLoading reflects this (might be redundant if always set by first add)
+      return { agentState: { ...state.agentState, isLoading: true } }; 
+    }),
+
+  removeTaskFromActive: (taskId) =>
+    set((state) => {
+      const newActiveTasks = state.agentState.activeTasks.filter((id) => id !== taskId);
+      return {
+        agentState: {
+          ...state.agentState,
+          activeTasks: newActiveTasks,
+          isLoading: newActiveTasks.length > 0, // Update loading based on remaining active tasks
+        },
+      };
+    }),
 }));
 
 // Log store changes in development for debugging

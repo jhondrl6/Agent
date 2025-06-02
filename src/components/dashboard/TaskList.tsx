@@ -13,48 +13,73 @@ export function TaskList() {
   );
   // Subscribe to global loading state, e.g., if TaskExecutor sets it.
   const agentIsGloballyLoading = useAgentStore((state) => state.agentState.isLoading);
+  // tasksInProgressCount can be derived from the mission object's tasks directly if preferred,
+  // or from agentState.activeTasks.length. Let's use agentState.activeTasks.length for directness with global state.
+  const activeTasksGlobalCount = useAgentStore((state) => state.agentState.activeTasks.length);
 
-  const [isExecutingTaskLocal, setIsExecutingTaskLocal] = useState(false); // Local loading state for the button
 
-  // This effect helps reset the local button loading state if a global loading state
-  // (potentially controlled by TaskExecutor) is also being used and indicates completion.
-  useEffect(() => {
-    if (!agentIsGloballyLoading && isExecutingTaskLocal) {
-      setIsExecutingTaskLocal(false);
-    }
-  }, [agentIsGloballyLoading, isExecutingTaskLocal]);
+  // const [areTasksExecuting, setAreTasksExecuting] = useState(false); // REMOVED
+  // useEffect for areTasksExecuting // REMOVED
 
-  const handleRunNextTask = async () => {
+  const handleExecutePendingTasks = async () => {
     if (!mission || !mission.tasks) return;
 
-    const pendingTask = mission.tasks.find(task => task.status === 'pending');
+    const pendingTasks = mission.tasks.filter(task => task.status === 'pending');
 
-    if (pendingTask) {
-      setIsExecutingTaskLocal(true);
-      const executor = new TaskExecutor();
-      try {
-        console.log(`[TaskList] Triggering execution for task: ${pendingTask.id} from mission ${mission.id}`);
-        await executor.executeTask(mission.id, pendingTask);
-        // TaskExecutor updates the store. UI will react.
-        // Local loading state (isExecutingTaskLocal) might be reset by useEffect if global loading changes,
-        // or can be reset here if preferred after the await, though it might be premature
-        // if other operations depend on the global state.
-      } catch (error) {
-        console.error("[TaskList] Error explicitly caught while triggering task execution:", error);
-        // TaskExecutor is expected to set global error state.
-        // Reset local button loading state in case of an error during the trigger.
-        setIsExecutingTaskLocal(false);
-      }
-    } else {
-      // This alert can be replaced with a more integrated UI notification.
-      alert("No pending tasks available for this mission.");
+    if (pendingTasks.length === 0) {
+      alert("No pending tasks to run for this mission."); // Consider a more integrated notification
+      return;
+    }
+
+    // setAreTasksExecuting(true); // REMOVED - global isLoading will be set by TaskExecutor via StateManager
+    console.log(`[TaskList] Triggering execution for ${pendingTasks.length} pending tasks for mission ${mission.id}.`);
+    
+    const executor = new TaskExecutor(); // Instantiate once for this batch
+    
+    // Create an array of promises. executeTask is async but we don't await each one here.
+    const taskPromises = pendingTasks.map(task => 
+      executor.executeTask(mission.id, task)
+        .catch(err => { 
+          // This catch is for unexpected errors *before* executeTask's own try/catch handles it.
+          // executeTask is designed to always handle its errors and update the store.
+          // So, a rejection here would be highly unusual unless executeTask itself throws before its try block.
+          console.error(`[TaskList] Critical error from executeTask promise for ${task.id} (this indicates an issue in executeTask's error handling):`, err);
+          // Return a specific shape to identify failure if needed by Promise.allSettled's results,
+          // though executeTask should prevent this by design.
+          return { status: 'rejected', reason: err, taskId: task.id }; 
+        })
+    );
+
+    try {
+      const results = await Promise.allSettled(taskPromises);
+      console.log('[TaskList] All triggered task promises have settled. Results:', results);
+      
+      // Optionally, iterate through results to log successes/failures specific to this batch run
+      // This can be useful for debugging the Promise.allSettled part itself.
+      results.forEach((result, index) => {
+        const task = pendingTasks[index]; // Assuming order is preserved
+        if (result.status === 'fulfilled') {
+          // Fulfillment here means executeTask completed its own logic (which includes updating the store for success/failure).
+          // It does NOT mean the task *succeeded*.
+          console.log(`[TaskList] executeTask for ${task.id} ("${task.description.substring(0,50)}...") completed its execution run (check store for actual success/failure).`);
+        } else {
+          // This means the promise returned by executor.executeTask was rejected.
+          // This should be rare if executeTask's internal try/catch is robust.
+          console.error(`[TaskList] Promise for task ${task.id} ("${task.description.substring(0,50)}...") was rejected:`, result.reason);
+        }
+      });
+
+    } catch (error) {
+      // This catch is for errors in Promise.allSettled itself, which is highly unlikely.
+      console.error("[TaskList] Error during Promise.allSettled execution:", error);
+    } finally {
+      // setAreTasksExecuting(false); // REMOVED - global isLoading will be managed by StateManager
     }
   };
   
-  const getStatusPillClasses = (status: Task['status']) => {
-    // Light theme consistent status pills
+  const getStatusPillClasses = (status: Task['status']) => { // Keep this function as it's used below
     switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300'; // Adjusted for light theme
       case 'in-progress': return 'bg-blue-100 text-blue-800 border-blue-300';
       case 'completed': return 'bg-green-100 text-green-800 border-green-300';
       case 'failed': return 'bg-red-100 text-red-800 border-red-300';
@@ -83,15 +108,15 @@ export function TaskList() {
           <p className="text-xs text-gray-500 font-mono">ID: {mission.id}</p>
         </div>
         <button
-          onClick={handleRunNextTask}
-          disabled={isExecutingTaskLocal || !hasPendingTasks || agentIsGloballyLoading}
+          onClick={handleExecutePendingTasks}
+          disabled={agentIsGloballyLoading || !hasPendingTasks} // Use global loading state
           className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center transition-colors duration-150 ease-in-out mt-3 sm:mt-0 w-full sm:w-auto"
-          title={!hasPendingTasks ? "No pending tasks available" : agentIsGloballyLoading ? "Agent is busy" : "Run the next available task"}
+          title={!hasPendingTasks ? "No pending tasks available" : agentIsGloballyLoading ? "Tasks are currently executing" : "Run all pending tasks"}
         >
-          {isExecutingTaskLocal || agentIsGloballyLoading ? (
+          {agentIsGloballyLoading && activeTasksGlobalCount > 0 && ( // Show spinner if globally loading and tasks are active
             <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-          ) : null}
-          {isExecutingTaskLocal || agentIsGloballyLoading ? 'Executing...' : 'Run Next Pending Task'}
+          )}
+          {agentIsGloballyLoading && activeTasksGlobalCount > 0 ? `Executing (${activeTasksGlobalCount} Active)...` : 'Run All Pending Tasks'}
         </button>
       </div>
 
