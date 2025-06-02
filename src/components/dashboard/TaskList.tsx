@@ -127,6 +127,14 @@ export function TaskList() {
                   <span className="mx-1">|</span>
                   <span>Updated: {new Date(task.updatedAt).toLocaleString()}</span>
                </div>
+               {task.status === 'failed' && task.failureDetails && (
+                <div className="mt-2 p-2 rounded bg-red-50 border border-red-200 text-red-700 text-xs">
+                  <p className="font-semibold mb-0.5">Failure Details (from {new Date(task.failureDetails.timestamp).toLocaleTimeString()}):</p>
+                  <p><strong className="text-red-600">Reason:</strong> {task.failureDetails.reason}</p>
+                  {task.failureDetails.suggestedAction && <p><strong className="text-red-600">Suggested Action:</strong> {task.failureDetails.suggestedAction}</p>}
+                  {task.failureDetails.originalError && <p className="truncate"><strong className="text-red-600">Original Error:</strong> {task.failureDetails.originalError}</p>}
+                </div>
+              )}
             </li>
           ))}
         </ul>

@@ -17,7 +17,16 @@ export interface Task {
   retries: number;
   createdAt: Date;
   updatedAt: Date;
+  failureDetails?: {
+    reason: string; // Reason for failure from DecisionEngine or direct error
+    suggestedAction?: FailedTaskAction; // Suggested action from DecisionEngine
+    originalError?: string; // Simplified original error message
+    timestamp: Date; // When the failure was processed
+  };
 }
+
+// Import FailedTaskAction at the top of the file or ensure it's resolvable
+import type { FailedTaskAction } from '@/lib/agent/DecisionEngine';
 
 export interface AgentState {
   currentMissionId?: string;
