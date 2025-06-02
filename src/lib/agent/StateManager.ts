@@ -1,10 +1,11 @@
 // src/lib/agent/StateManager.ts
 import { create } from 'zustand';
-import { Mission, Task, AgentState } from '@/lib/types/agent';
+import { Mission, Task, AgentState, LogEntry, LogLevel } from '@/lib/types/agent';
 
 interface StoreState {
   missions: Record<string, Mission>;
   agentState: AgentState;
+  logs: LogEntry[]; // New state for logs
 }
 
 interface StoreActions {
@@ -19,8 +20,11 @@ interface StoreActions {
   setCurrentMissionId: (missionId?: string) => void;
   addTaskToActive: (taskId: string) => void;
   removeTaskFromActive: (taskId: string) => void;
+  addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
   // Potentially add more actions as needed
 }
+
+const MAX_LOG_ENTRIES = 200; // Or any preferred number
 
 export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
   // Initial State
@@ -31,6 +35,7 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
     currentMissionId: undefined,
     error: undefined,
   },
+  logs: [], // Initialize logs as an empty array
 
   // Actions
   createMission: (mission) => {
@@ -178,6 +183,22 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
           isLoading: newActiveTasks.length > 0, // Update loading based on remaining active tasks
         },
       };
+    }),
+
+  addLog: ({ level, message, details }) =>
+    set((state) => {
+      const newLogEntry: LogEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`, // Simple unique ID
+        timestamp: new Date(),
+        level,
+        message,
+        details,
+      };
+      const updatedLogs = [newLogEntry, ...state.logs]; // Add new logs to the beginning
+      if (updatedLogs.length > MAX_LOG_ENTRIES) {
+        updatedLogs.splice(MAX_LOG_ENTRIES); // Remove oldest logs if limit exceeded
+      }
+      return { logs: updatedLogs };
     }),
 }));
 

@@ -216,20 +216,41 @@ ${userPrompt}`;
     return { provider: chosenProviderByRules, reason: reasonByRules };
   }
 
-  public async handleFailedTask(input: HandleFailedTaskInput): Promise<HandleFailedTaskOutput> { // Made async
-    const { task, error } = input;
-    const errorMessage = typeof error === 'string' ? error.toLowerCase() : (error?.message || 'Unknown error').toLowerCase();
+  public async handleFailedTask(input: HandleFailedTaskInput): Promise<HandleFailedTaskOutput> {
+    const { task, error } = input; // error here is the primary error that triggered call to handleFailedTask
+    const validationOutcome = task.validationOutcome; // This might be present
+
+    // Determine effective error message and if it's a validation failure
+    let effectiveErrorMessage = (typeof error === 'string' ? error : (error?.message || 'Unknown execution error')).toLowerCase();
+    let isValidationFailure = false;
+    const originalErrorForPrompt = typeof error === 'string' ? error : (error?.message || 'Unknown execution error'); // For LLM prompt, keep original case for error
     const errorStack = typeof error !== 'string' && error?.stack ? error.stack : 'No stack available.';
     const errorStatusCode = (typeof error === 'object' && error !== null && 'status' in error) ? (error as any).status : undefined;
 
+    if (task.status === 'completed' && validationOutcome && !validationOutcome.isValid) {
+      effectiveErrorMessage = `Validation failed: ${validationOutcome.critique || 'No critique provided.'}`.toLowerCase();
+      isValidationFailure = true;
+      this.addLog({level: 'warn', message: `[DecisionEngine] Task ${task.id} handling as validation failure. Critique: ${validationOutcome.critique}`});
+      // console.log already part of addLog if verbose enough
+    } else if (error) {
+      this.addLog({level: 'warn', message: `[DecisionEngine] Task ${task.id} handling an execution error: ${effectiveErrorMessage.substring(0,100)}...`});
+    } else if (validationOutcome && !validationOutcome.isValid) {
+      effectiveErrorMessage = `Validation failed: ${validationOutcome.critique || 'No critique provided.'}`.toLowerCase();
+      isValidationFailure = true;
+      this.addLog({level: 'warn', message: `[DecisionEngine] Task ${task.id} (status: ${task.status}) handling as validation failure. Critique: ${validationOutcome.critique}`});
+    } else {
+        this.addLog({level: 'debug', message: `[DecisionEngine] handleFailedTask called for task ${task.id} with no primary error and no validation failure. This is unusual.`});
+        // This case should be rare: task didn't fail execution, and validation (if run) was ok or not present.
+        // Defaulting to abandon, but this might need specific handling if it becomes common.
+        return { action: 'abandon', reason: 'Task reported as failed, but no clear error or validation issue identified.', delayMs: undefined };
+    }
 
     if (this.useLLMForDecisions && this.geminiClient) {
-      console.log(`[DecisionEngine] Attempting to use LLM to handle failure for task ${task.id}: "${task.description}"`);
-
+      this.addLog({level: 'debug', message: `[DecisionEngine] Attempting LLM for failure handling task ${task.id}. Type: ${isValidationFailure ? 'ValidationFailure' : 'ExecutionError'}`});
+      
       const availableActions: FailedTaskAction[] = ['retry', 'abandon', 're-plan', 'escalate'];
-      const actionsString = availableActions.join("', '"); // For prompt construction
+      const actionsString = availableActions.join("', '");
 
-      // Prepare context about past failures for this task, if any
       let failureHistoryContext = "";
       if (task.failureDetails && task.failureDetails.originalError) {
           failureHistoryContext = `The task previously failed with: "${task.failureDetails.originalError}". Suggested action then was: ${task.failureDetails.suggestedAction || 'N/A'}. This is retry number ${task.retries} (0-indexed).`;
@@ -237,15 +258,14 @@ ${userPrompt}`;
           failureHistoryContext = `This is retry number ${task.retries} (0-indexed) for this task. Previous attempts also failed.`;
       }
 
-
       const systemPrompt = `You are an expert AI system diagnosing task failures for a research agent.
-Your goal is to analyze the failed task, the error message, and suggest the best course of action.
+Your goal is to analyze the failed task, the error message (or validation critique), and suggest the best course of action.
 Available actions are: '${actionsString}'.
 
 Consider the following when making your decision:
-- 'retry': Choose if the error seems transient (network issues, temporary API unavailability, rate limits like 429) and the task has not exceeded max retries (max is ${DecisionEngine.MAX_TASK_RETRIES} retries, meaning ${DecisionEngine.MAX_TASK_RETRIES + 1} total attempts). If suggesting 'retry', also suggest a 'delayMs' (e.g., 1000 for 1st retry, 2000 for 2nd, 4000 for 3rd based on retry count).
-- 'abandon': Choose if the error is persistent (invalid API key (401/403), fatal error, content safety block, malformed request (400), or if max retries are met).
-- 're-plan': Choose if the task itself seems ill-defined, too broad, or if the error suggests the approach needs fundamental rethinking. This might involve breaking the task down further or changing its goal.
+- 'retry': Choose if the error seems transient (network issues, temporary API unavailability, rate limits like 429) OR if a validation failure critique suggests the content might improve with a retry (e.g., different query, alternative source, especially if validator suggested 'retry_task_new_params', 'refine_query', or 'alternative_source'). Task must not exceed max retries (max is ${DecisionEngine.MAX_TASK_RETRIES} retries). If suggesting 'retry', also suggest a 'delayMs' (e.g., 1000 for 1st retry, 2000 for 2nd, 4000 for 3rd based on retry count).
+- 'abandon': Choose if the error is persistent (invalid API key (401/403), fatal error, content safety block, malformed request (400), or if max retries are met). Also choose if validation critique indicates fundamentally unfixable content or if validator suggested 'escalate_issue' and LLM agrees.
+- 're-plan': Choose if the task itself seems ill-defined, too broad, or if the error/validation critique suggests the approach needs fundamental rethinking (e.g. validator suggested 'refine_query' and it's a complex query issue).
 - 'escalate': Choose for critical, unrecoverable system errors or if human intervention is clearly needed (rarely use this).
 
 Analyze the following failed task details and recommend an action.
@@ -258,12 +278,15 @@ Do NOT output markdown (e.g., \`\`\`json ... \`\`\`). Output only the raw JSON o
 Max retries for a task (number of times it can be retried after the first failure) is ${DecisionEngine.MAX_TASK_RETRIES}. Current retry count for this task (number of past failures/retry attempts made): ${task.retries}.
 `;
 
-      const userPrompt = `Failed Task:
+      const userPrompt = `Failed Task Details:
 ID: ${task.id}
 Description: "${task.description}"
-Status at failure: ${task.status} 
+Status at point of this call: ${task.status} 
 Retries so far: ${task.retries} 
-Error Message: "${errorMessage}"
+Is this a validation failure of a completed task execution?: ${isValidationFailure}
+Primary Error/Critique: "${effectiveErrorMessage}" 
+${isValidationFailure && validationOutcome?.suggestedAction ? `Validator Suggested Action: ${validationOutcome.suggestedAction}` : ""}
+Original Execution Error (if different from critique & available): "${originalErrorForPrompt}"
 Error Status Code (if applicable): ${errorStatusCode || 'N/A'}
 Error Stack (if available): ${errorStack}
 ${failureHistoryContext ? `Failure History Context: ${failureHistoryContext}` : ""}
@@ -275,12 +298,12 @@ Okay, analyze the following failed task.
 ${userPrompt}`;
 
       try {
-        const geminiParams: GeminiRequestParams = { prompt: fullPrompt, temperature: 0.3, maxOutputTokens: 250 }; // Increased maxOutputTokens slightly
+        const geminiParams: GeminiRequestParams = { prompt: fullPrompt, temperature: 0.3, maxOutputTokens: 250 };
         const response = await this.geminiClient.generate(geminiParams);
         const rawJsonResponse = response.candidates?.[0]?.content?.parts?.[0]?.text;
 
         if (rawJsonResponse) {
-          console.log('[DecisionEngine] Raw JSON response from LLM for failure handling:', rawJsonResponse);
+          this.addLog({level: 'debug', message: `[DecisionEngine] LLM raw response for task ${task.id} failure: ${rawJsonResponse.substring(0,100)}...`});
           let cleanedJson = rawJsonResponse.trim();
           if (cleanedJson.startsWith('```json')) cleanedJson = cleanedJson.substring(7).trim();
           if (cleanedJson.endsWith('```')) cleanedJson = cleanedJson.substring(0, cleanedJson.length - 3).trim();

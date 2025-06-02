@@ -138,36 +138,101 @@ export class TaskExecutor {
       const validator = new ResultValidator();
       const validationInput: ValidationInput = { task, result: taskResultForValidation };
       validationOutcomeForUpdate = validator.validate(validationInput);
-      console.log(`[TaskExecutor] Result validation for task ${task.id}: 
-        Valid: ${validationOutcomeForUpdate.isValid}, 
-        Quality: ${validationOutcomeForUpdate.qualityScore || 'N/A'}, 
-        Critique: ${validationOutcomeForUpdate.critique},
-        Suggested Action by Validator: ${validationOutcomeForUpdate.suggestedAction || 'N/A'}`);
+      
+      this.addLog({ 
+        level: validationOutcomeForUpdate.isValid ? 'info' : 'warn', 
+        message: `[TaskExecutor] Result validation for task ${task.id}: Valid: ${validationOutcomeForUpdate.isValid}`, 
+        details: { critique: validationOutcomeForUpdate.critique, score: validationOutcomeForUpdate.qualityScore, suggestedAction: validationOutcomeForUpdate.suggestedAction }
+      });
       // === END VALIDATION STEP ===
 
-      // If validation is not valid, the DecisionEngine (in a later step) might use this info.
-      // For now, TaskExecutor still marks task as 'completed' because the execution itself didn't throw.
-      // The 'isValid' flag within validationOutcome will signify content quality.
-      updateTask(missionId, task.id, { 
-        status: 'completed', 
-        result: taskResultForValidation,
-        validationOutcome: validationOutcomeForUpdate,
-        failureDetails: undefined, // Clear previous failure details
-      });
+      if (!validationOutcomeForUpdate.isValid) {
+        this.addLog({ level: 'warn', message: `[TaskExecutor] Task ${task.id} result validation FAILED. Handing off to DecisionEngine for failure processing.`});
+        
+        const validationErrorPayload = { 
+          name: 'ValidationError',
+          message: `Validation failed: ${validationOutcomeForUpdate.critique || 'No specific critique.'}`,
+          details: validationOutcomeForUpdate // Pass the whole validation outcome for context
+        };
+      
+        const geminiApiKeyForDecision = process.env.GEMINI_API_KEY;
+        const decisionEngine = new DecisionEngine(geminiApiKeyForDecision, this.addLog);
+        
+        const failureDecisionInput: HandleFailedTaskInput = {
+          // Pass the task state as it was when it "completed" its execution phase but failed validation
+          task: { ...task, status: 'completed', result: taskResultForValidation, validationOutcome: validationOutcomeForUpdate }, 
+          error: validationErrorPayload, 
+        };
+        const failureDecision = await decisionEngine.handleFailedTask(failureDecisionInput);
+      
+        this.addLog({
+            level: 'warn',
+            message: `[TaskExecutor] Decision for validation failure of task ${task.id}: ${failureDecision.action}`,
+            details: { reason: failureDecision.reason, delay: failureDecision.delayMs }
+        });
+      
+        if (failureDecision.action === 'retry' && typeof failureDecision.delayMs === 'number') {
+          const newRetryCountInStore = task.retries + 1;
+          // Update task state to 'retrying' and include original (problematic) result and validation outcome.
+          updateTask(missionId, task.id, {
+            status: 'retrying',
+            retries: newRetryCountInStore,
+            result: taskResultForValidation, 
+            validationOutcome: validationOutcomeForUpdate, 
+            failureDetails: { 
+              reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. ${failureDecision.reason}`,
+              suggestedAction: failureDecision.action, // This should be 'retry'
+              originalError: validationErrorPayload.message,
+              timestamp: new Date(),
+            },
+          });
+          await new Promise(resolve => setTimeout(resolve, failureDecision.delayMs));
+          const taskForNextExecution: Task = { ...task, retries: newRetryCountInStore, status: 'pending', result: undefined, validationOutcome: undefined, failureDetails: undefined };
+          this.addLog({level:'info', message:`[TaskExecutor] Re-executing task ${task.id} due to validation failure retry (Retry Attempt #${newRetryCountInStore}).`});
+          return this.executeTask(missionId, taskForNextExecution);
+        } else { // 'abandon' or other non-retry action for the validation failure
+          updateTask(missionId, task.id, {
+            status: 'failed', // Mark as failed due to unrecoverable validation issue
+            result: taskResultForValidation, 
+            validationOutcome: validationOutcomeForUpdate,
+            failureDetails: {
+              reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. ${failureDecision.reason}`,
+              suggestedAction: failureDecision.action,
+              originalError: validationErrorPayload.message,
+              timestamp: new Date(),
+            },
+          });
+          // Task failed validation and decision is not to retry. Fall through to finally.
+          return; // Exit after handling non-retryable validation failure.
+        }
+      } else { // validationOutcome.isValid === true
+        // Task completed successfully AND passed validation
+        this.addLog({level:'info', message:`[TaskExecutor] Task ${task.id} completed successfully and passed validation.`});
+        updateTask(missionId, task.id, { 
+          status: 'completed', 
+          result: taskResultForValidation,
+          validationOutcome: validationOutcomeForUpdate,
+          failureDetails: undefined, // Clear previous failures
+        });
+      }
 
     } catch (error) { // Catches errors from API calls, simulation failures, or other unexpected issues
-      finalStatus = 'failed'; // Mark for update in store
+      finalStatus = 'failed'; // Mark for update in store (though already handled by DE path below)
       const errorMessage = error instanceof Error ? error.message : String(error);
       // Log the initial error for this specific attempt
-      console.error(`[TaskExecutor] Error during task ${task.id} execution (Attempt details: ${task.retries} previous retries). Error: ${errorMessage}`, error);
+      this.addLog({level: 'error', message: `[TaskExecutor] Execution error task ${task.id} (Retries: ${task.retries}): ${errorMessage.substring(0,150)}...`, details: { error }});
+      // console.error is less important if addLog handles error level appropriately
       
       const geminiApiKeyForDecision = process.env.GEMINI_API_KEY;
-      const decisionEngine = new DecisionEngine(geminiApiKeyForDecision);
-      const failureDecisionInput: HandleFailedTaskInput = { task, error };
+      const decisionEngine = new DecisionEngine(geminiApiKeyForDecision, this.addLog); 
+      const failureDecisionInput: HandleFailedTaskInput = { task, error }; // task already has its current retries
       const failureDecision = await decisionEngine.handleFailedTask(failureDecisionInput);
 
-      console.log(`[TaskExecutor] DecisionEngine suggestion for task ${task.id} (after ${task.retries} previous retries): 
-        Action: ${failureDecision.action}, Reason: "${failureDecision.reason}", Delay: ${failureDecision.delayMs || 'N/A'}`);
+      this.addLog({
+        level: 'warn', 
+        message: `[TaskExecutor] DecisionEngine suggestion for task ${task.id} (execution error): ${failureDecision.action}`, 
+        details: { reason: failureDecision.reason, delay: failureDecision.delayMs, retries: task.retries }
+      });
 
       failureDetailsForUpdate = {
         reason: failureDecision.reason,

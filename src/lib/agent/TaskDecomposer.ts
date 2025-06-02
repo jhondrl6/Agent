@@ -2,15 +2,25 @@ import { Mission, Task } from '@/lib/types/agent';
 import { GeminiClient } from '@/lib/search/GeminiClient';
 import { GeminiRequestParams } from '@/lib/types/search'; // Ensure this is imported for params
 
+import { LogLevel } from '@/lib/types/agent'; // For addLog type
+
 export class TaskDecomposer {
   private geminiClient: GeminiClient;
+  private addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
 
-  constructor(geminiApiKey: string) {
+  constructor(
+    geminiApiKey: string, 
+    addLogFunction: (entryData: { level: LogLevel; message: string; details?: any }) => void
+  ) {
     if (!geminiApiKey) {
+      // This error should ideally be logged before throwing if addLog is available,
+      // but constructor failure means we might not have it.
+      // Consider logging from the caller if constructor fails.
       throw new Error('Gemini API key is required for TaskDecomposer.');
     }
     this.geminiClient = new GeminiClient(geminiApiKey);
-    console.log('[TaskDecomposer] Initialized with GeminiClient.');
+    this.addLog = addLogFunction;
+    this.addLog({ level: 'info', message: '[TaskDecomposer] Initialized with GeminiClient.' });
   }
 
   async decomposeMission(mission: Mission): Promise<Task[]> {
