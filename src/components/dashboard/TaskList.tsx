@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useAgentStore } from '@/lib/agent/StateManager';
 import { Mission, Task } from '@/lib/types/agent';
 import { TaskExecutor } from '@/lib/agent/TaskExecutor';
+import { Modal } from '@/components/ui/modal'; // Import Modal
 
 export function TaskList() {
   const currentMissionId = useAgentStore((state) => state.agentState.currentMissionId);
@@ -13,13 +14,21 @@ export function TaskList() {
   );
   // Subscribe to global loading state, e.g., if TaskExecutor sets it.
   const agentIsGloballyLoading = useAgentStore((state) => state.agentState.isLoading);
-  // tasksInProgressCount can be derived from the mission object's tasks directly if preferred,
-  // or from agentState.activeTasks.length. Let's use agentState.activeTasks.length for directness with global state.
   const activeTasksGlobalCount = useAgentStore((state) => state.agentState.activeTasks.length);
 
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
-  // const [areTasksExecuting, setAreTasksExecuting] = useState(false); // REMOVED
-  // useEffect for areTasksExecuting // REMOVED
+  const handleTaskClick = (task: Task) => {
+    setSelectedTask(task);
+    setIsModalOpen(true);
+  };
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setSelectedTask(null);
+  };
+
+  // No local 'areTasksExecuting' state or useEffect for it anymore
 
   const handleExecutePendingTasks = async () => {
     if (!mission || !mission.tasks) return;
@@ -34,7 +43,8 @@ export function TaskList() {
     // setAreTasksExecuting(true); // REMOVED - global isLoading will be set by TaskExecutor via StateManager
     console.log(`[TaskList] Triggering execution for ${pendingTasks.length} pending tasks for mission ${mission.id}.`);
     
-    const executor = new TaskExecutor(); // Instantiate once for this batch
+    const addLog = useAgentStore.getState().addLog;
+    const executor = new TaskExecutor(addLog); // Instantiate once for this batch with addLog
     
     // Create an array of promises. executeTask is async but we don't await each one here.
     const taskPromises = pendingTasks.map(task => 
@@ -129,7 +139,14 @@ export function TaskList() {
       ) : (
         <ul className="space-y-4">
           {mission.tasks.map((task) => (
-            <li key={task.id} className="p-4 border border-gray-200 rounded-lg bg-gray-50 shadow-sm hover:shadow-md transition-shadow duration-150 ease-in-out">
+            <li 
+              key={task.id} 
+              className="p-4 border border-gray-200 rounded-lg bg-gray-50 shadow-sm hover:shadow-lg hover:border-blue-300 transition-all duration-150 ease-in-out cursor-pointer"
+              onClick={() => handleTaskClick(task)}
+              role="button"
+              tabIndex={0}
+              onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') handleTaskClick(task); }}
+            >
               <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-2">
                 <h3 className="text-lg font-medium text-gray-700 flex-grow pr-2 break-words">{task.description}</h3>
                 <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${getStatusPillClasses(task.status)} whitespace-nowrap mt-2 sm:mt-0`}>
@@ -141,29 +158,92 @@ export function TaskList() {
                 <span className="text-gray-300">|</span>
                 <span>Retries: <span className="font-semibold text-gray-700">{task.retries}</span></span>
               </div>
+              {/* Minimal result preview, full result in modal */}
               {task.result && (
                   <div className="mt-1 text-xs text-gray-500">
-                      <strong>Result: </strong> 
-                      <pre className="whitespace-pre-wrap bg-gray-100 p-2 rounded text-xs text-gray-600 max-h-20 overflow-y-auto">{String(task.result).substring(0,300)}{String(task.result).length > 300 ? '...' : ''}</pre>
+                      <strong>Result Preview: </strong> 
+                      <span className="italic text-gray-600">{String(task.result).substring(0,100)}{String(task.result).length > 100 ? '...' : ''}</span>
                   </div>
               )}
                <div className="text-xs text-gray-400 mt-2 border-t border-gray-200 pt-2">
-                  <span>Created: {new Date(task.createdAt).toLocaleString()}</span>
-                  <span className="mx-1">|</span>
-                  <span>Updated: {new Date(task.updatedAt).toLocaleString()}</span>
+                  <span>Last Updated: {new Date(task.updatedAt).toLocaleString()}</span>
                </div>
                {task.status === 'failed' && task.failureDetails && (
-                <div className="mt-2 p-2 rounded bg-red-50 border border-red-200 text-red-700 text-xs">
-                  <p className="font-semibold mb-0.5">Failure Details (from {new Date(task.failureDetails.timestamp).toLocaleTimeString()}):</p>
-                  <p><strong className="text-red-600">Reason:</strong> {task.failureDetails.reason}</p>
-                  {task.failureDetails.suggestedAction && <p><strong className="text-red-600">Suggested Action:</strong> {task.failureDetails.suggestedAction}</p>}
-                  {task.failureDetails.originalError && <p className="truncate"><strong className="text-red-600">Original Error:</strong> {task.failureDetails.originalError}</p>}
+                <div className="mt-2 p-1.5 rounded bg-red-50 border border-red-200 text-red-600 text-xs">
+                  <p className="font-medium truncate">Failed: {task.failureDetails.reason.substring(0,100)}...</p>
                 </div>
               )}
+               {task.validationOutcome && !task.validationOutcome.isValid && (
+                 <div className="mt-2 p-1.5 rounded bg-yellow-50 border border-yellow-300 text-yellow-700 text-xs">
+                   <p className="font-medium truncate">Validation: {task.validationOutcome.critique?.substring(0,100)}...</p>
+                 </div>
+               )}
             </li>
           ))}
         </ul>
       )}
+
+      {selectedTask && (
+      <Modal isOpen={isModalOpen} onClose={closeModal} title={`Task Details: ${selectedTask.id.substring(0,15)}...`} size="2xl">
+        <div className="space-y-4 text-sm text-gray-700">
+          <div>
+            <strong className="text-gray-500 block mb-0.5">Full Description:</strong>
+            <p className="whitespace-pre-wrap bg-gray-50 p-2 border rounded">{selectedTask.description}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <div><strong className="text-gray-500">Status:</strong>
+              <span className={`ml-2 px-2 py-0.5 text-xs font-semibold rounded-full border ${getStatusPillClasses(selectedTask.status)}`}>
+                {selectedTask.status.toUpperCase()}
+              </span>
+            </div>
+            <div><strong className="text-gray-500">Retries:</strong> {selectedTask.retries} / {DecisionEngine.MAX_TASK_RETRIES}</div>
+            <div><strong className="text-gray-500">Created:</strong> {new Date(selectedTask.createdAt).toLocaleString()}</div>
+            <div><strong className="text-gray-500">Last Updated:</strong> {new Date(selectedTask.updatedAt).toLocaleString()}</div>
+          </div>
+
+          {selectedTask.result && (
+            <div>
+              <strong className="text-gray-500 block mb-0.5">Result:</strong>
+              <pre className="mt-1 p-3 bg-gray-50 border rounded text-xs text-gray-600 overflow-x-auto whitespace-pre-wrap max-h-60 custom-scrollbar">
+                {typeof selectedTask.result === 'object' ? JSON.stringify(selectedTask.result, null, 2) : String(selectedTask.result)}
+              </pre>
+            </div>
+          )}
+
+          {selectedTask.validationOutcome && (
+            <div className={`p-3 rounded border ${selectedTask.validationOutcome.isValid ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-300'}`}>
+              <strong className="text-gray-500 block mb-1">Validation Outcome:</strong>
+              <div className="space-y-1">
+                <p><strong>Valid:</strong> {selectedTask.validationOutcome.isValid ? 'Yes' : 'No'}</p>
+                {selectedTask.validationOutcome.qualityScore !== undefined && <p><strong>Quality Score:</strong> {selectedTask.validationOutcome.qualityScore.toFixed(2)}</p>}
+                {selectedTask.validationOutcome.critique && <p><strong>Critique:</strong> {selectedTask.validationOutcome.critique}</p>}
+                {selectedTask.validationOutcome.suggestedAction && <p><strong>Validator Suggested Action:</strong> {selectedTask.validationOutcome.suggestedAction}</p>}
+              </div>
+            </div>
+          )}
+
+          {selectedTask.failureDetails && (
+            <div className="p-3 rounded bg-red-50 border border-red-200 text-red-700">
+              <strong className="text-gray-500 block mb-1">Failure Details:</strong>
+              <div className="space-y-1">
+                <p><strong>Reason:</strong> {selectedTask.failureDetails.reason}</p>
+                {selectedTask.failureDetails.suggestedAction && <p><strong>Engine Suggested Action:</strong> {selectedTask.failureDetails.suggestedAction}</p>}
+                {selectedTask.failureDetails.originalError && <p><strong>Original Error:</strong> <span className="font-mono text-xs">{selectedTask.failureDetails.originalError}</span></p>}
+                <p><strong>Timestamp:</strong> {new Date(selectedTask.failureDetails.timestamp).toLocaleString()}</p>
+              </div>
+            </div>
+          )}
+          <div className="pt-3 mt-3 border-t border-gray-200 flex justify-end">
+             <button 
+                onClick={closeModal} 
+                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
+              >
+                Close
+              </button>
+          </div>
+        </div>
+      </Modal>
+    )}
     </div>
   );
 }

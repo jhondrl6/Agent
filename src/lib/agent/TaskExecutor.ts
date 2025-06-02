@@ -3,15 +3,17 @@ import { Task } from '@/lib/types/agent';
 import { useAgentStore } from './StateManager'; 
 import { TavilyClient } from '@/lib/search/TavilyClient';
 import { SerperClient } from '@/lib/search/SerperClient';
-// import { GeminiClient } from '@/lib/search/GeminiClient'; // Currently not used for search execution
 import { TavilySearchParams, SerperSearchParams } from '@/lib/types/search';
 import { DecisionEngine, ChooseSearchProviderInput, SearchProviderOption, HandleFailedTaskInput } from './DecisionEngine';
-import { ResultValidator, ValidationInput, ValidationOutput } from '@/lib/search/ResultValidator'; // Added import
+import { ResultValidator, ValidationInput, ValidationOutput } from '@/lib/search/ResultValidator'; 
+import { LogLevel } from '@/lib/types/agent'; 
 
 export class TaskExecutor {
+  private addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
 
-  constructor() {
-    console.log('[TaskExecutor] Initialized');
+  constructor(addLogFunction: (entryData: { level: LogLevel; message: string; details?: any }) => void) {
+    this.addLog = addLogFunction;
+    this.addLog({ level: 'debug', message: '[TE] TaskExecutor Initialized.'}); // Changed to debug as per typical init log level
   }
 
   private extractSearchQuery(description: string, keywords: string[]): string {
@@ -32,17 +34,19 @@ export class TaskExecutor {
       removeTaskFromActive 
     } = useAgentStore.getState();
     
-    let taskResultForValidation: any = null; // To hold the actual content result for validation
-    let finalStatus: Task['status'] = 'completed'; // Assume success unless an exception is caught or validation fails content-wise
-    let failureDetailsForUpdate: Task['failureDetails'] | undefined = undefined; // For errors caught in main try-catch
+    // Log task start (very beginning)
+    this.addLog({ 
+      level: 'info', 
+      message: `[TE] Starting task ${task.id} (Attempt: ${task.retries + 1} of ${DecisionEngine.MAX_TASK_RETRIES + 1})`, 
+      details: { missionId, description: task.description, currentRetries: task.retries } 
+    });
+
+    let taskResultForValidation: any = null; 
     let validationOutcomeForUpdate: ValidationOutput | undefined = undefined;
 
     try {
-      console.log(`[TaskExecutor] Adding task ${task.id} to active tasks list.`);
       addTaskToActive(task.id);
-
-      console.log(`[TaskExecutor] Executing task ${task.id} (Attempt: ${task.retries === 0 ? 'Initial' : 'Retry #' + task.retries}). Description: "${task.description}"`);
-      updateTask(missionId, task.id, { status: 'in-progress', failureDetails: undefined, validationOutcome: undefined }); // Clear previous run's details
+      updateTask(missionId, task.id, { status: 'in-progress', failureDetails: undefined, validationOutcome: undefined }); 
 
       const descriptionLower = task.description.toLowerCase();
       const searchKeywords = ["search for", "find information on", "find information about", "research", "look up", "investigate", "google search for", "serper search for", "tavily search for"];
@@ -50,31 +54,34 @@ export class TaskExecutor {
 
       if (isSearchTask) {
         const geminiApiKeyForDecision = process.env.GEMINI_API_KEY;
-        const decisionEngine = new DecisionEngine(geminiApiKeyForDecision);
+        // Pass this.addLog to DecisionEngine constructor
+        const decisionEngine = new DecisionEngine(this.addLog, geminiApiKeyForDecision);
         const availableProviders: SearchProviderOption[] = ['tavily', 'serper', 'gemini'];
         
         const decisionInput: ChooseSearchProviderInput = { taskDescription: task.description, availableProviders };
         const searchDecision = await decisionEngine.chooseSearchProvider(decisionInput);
-        console.log(`[TaskExecutor] DecisionEngine chose search provider: ${searchDecision.provider}. Reason: ${searchDecision.reason}`);
-
+        
         let query = this.extractSearchQuery(task.description, searchKeywords);
         if (!query.trim()) query = task.description;
-        console.log(`[TaskExecutor] Extracted search query: "${query}"`);
+
+        // Log query and chosen provider
+        this.addLog({ 
+          level: 'info', 
+          message: `[TE] Task ${task.id} using '${searchDecision.provider}' for query: "${query}"`,
+          details: { missionId, taskId: task.id, reason: searchDecision.reason }
+        });
 
         let searchProviderName: string = searchDecision.provider;
-        let searchAPISuccess = false; // Flag to indicate if the API call itself was successful
-
+        
         switch (searchDecision.provider) {
           case 'tavily':
             const tavilyApiKey = process.env.TAVILY_API_KEY;
             if (!tavilyApiKey) {
               taskResultForValidation = 'Configuration error: Tavily API key not found.';
-              setAgentError('Tavily API key (TAVILY_API_KEY) is not configured.'); // Set global error
-              // No 'throw' here, let validation handle it
+              setAgentError('Tavily API key (TAVILY_API_KEY) is not configured.');
             } else {
-              const tavilyClient = new TavilyClient(tavilyApiKey);
+              const tavilyClient = new TavilyClient(tavilyApiKey); // Assuming TavilyClient doesn't need addLog
               const tavilyResponse = await tavilyClient.search({ query, search_depth: 'basic', max_results: 3, include_answer: true });
-              searchAPISuccess = true; // API call was made
               if (tavilyResponse && (tavilyResponse.answer || (tavilyResponse.results && tavilyResponse.results.length > 0))) {
                 let combinedResults = "";
                 if (tavilyResponse.answer) combinedResults += `Tavily Answer: ${tavilyResponse.answer}\n\n`;
@@ -95,10 +102,8 @@ export class TaskExecutor {
               taskResultForValidation = 'Configuration error: Serper API key not found.';
               setAgentError('Serper API key (SERPER_API_KEY) is not configured.');
             } else {
-              const serperClient = new SerperClient(serperApiKey);
-              console.log(`[TaskExecutor] Using Serper to search for: "${query}"`);
+              const serperClient = new SerperClient(serperApiKey);  // Assuming SerperClient doesn't need addLog
               const serperResponse = await serperClient.search({ q: query, num: 3 });
-              searchAPISuccess = true;
               if (serperResponse && serperResponse.organic && serperResponse.organic.length > 0) {
                 taskResultForValidation = `${searchProviderName} Search Results:\n` + serperResponse.organic.map(
                   (res, idx) => `${idx + 1}. ${res.title}\n   Link: ${res.link}\n   Snippet: ${res.snippet?.substring(0, 200)}...\n`
@@ -108,58 +113,47 @@ export class TaskExecutor {
               }
             }
             break;
-          case 'gemini': // Placeholder for Gemini as a "searcher"
+          case 'gemini': 
             taskResultForValidation = `Gemini (as Search Provider) chosen. Placeholder result: Information about "${query}" would be generated here.`;
-            searchAPISuccess = true; // Simulated success of "API call"
             break;
           case 'none':
           default:
             taskResultForValidation = `No suitable search provider action taken. Decision: ${searchDecision.reason}`;
-            searchAPISuccess = false; // No API call was made if provider is 'none'
             break;
         }
-        // If searchAPISuccess is false AND taskResultForValidation contains config error, it's a setup issue.
-        // The validator will catch the content of taskResultForValidation.
-
-      } else { // Not a search task - use simulation
-        console.log(`[TaskExecutor] Task ${task.id} is not a search task. Using simulation.`);
+      } else { 
+        this.addLog({ level: 'debug', message: `[TE] Task ${task.id} is not a search task. Using simulation.`});
         const executionTime = Math.random() * 1500 + 500;
         await new Promise(resolve => setTimeout(resolve, executionTime));
         const isSuccess = Math.random() > 0.2;
         if (isSuccess) {
           taskResultForValidation = `Simulated success for: ${task.description}. Detailed findings: Proin quis tortor orci. Etiam at risus et justo dignissim congue.`;
         } else {
-          // This 'else' for simulation failure should be an exception to be caught by the main catch block
           throw new Error(`Simulated failure for: ${task.description}. Could not retrieve necessary data.`);
         }
       }
 
-      // === VALIDATION STEP for successfully executed operations (no exception thrown) ===
-      const validator = new ResultValidator();
+      this.addLog({ level: 'debug', message: `[TE] Task ${task.id} obtained raw result, proceeding to validation.`, details: { resultSummary: String(taskResultForValidation).substring(0,100)+"..." } });
+      const validator = new ResultValidator(); // Assuming ResultValidator doesn't need addLog
       const validationInput: ValidationInput = { task, result: taskResultForValidation };
       validationOutcomeForUpdate = validator.validate(validationInput);
       
       this.addLog({ 
         level: validationOutcomeForUpdate.isValid ? 'info' : 'warn', 
-        message: `[TaskExecutor] Result validation for task ${task.id}: Valid: ${validationOutcomeForUpdate.isValid}`, 
-        details: { critique: validationOutcomeForUpdate.critique, score: validationOutcomeForUpdate.qualityScore, suggestedAction: validationOutcomeForUpdate.suggestedAction }
+        message: `[TE] Result validation for task ${task.id}: Valid: ${validationOutcomeForUpdate.isValid}`, 
+        details: { critique: validationOutcomeForUpdate.critique, score: validationOutcomeForUpdate.qualityScore, suggestedAction: validationOutcomeForUpdate.suggestedAction, resultPreview: String(taskResultForValidation).substring(0,100)+"..." }
       });
-      // === END VALIDATION STEP ===
 
       if (!validationOutcomeForUpdate.isValid) {
-        this.addLog({ level: 'warn', message: `[TaskExecutor] Task ${task.id} result validation FAILED. Handing off to DecisionEngine for failure processing.`});
-        
+        this.addLog({ level: 'warn', message: `[TE] Task ${task.id} result validation FAILED. Handing off to DecisionEngine for failure processing.`, details: { validationCritique: validationOutcomeForUpdate.critique }});
         const validationErrorPayload = { 
           name: 'ValidationError',
           message: `Validation failed: ${validationOutcomeForUpdate.critique || 'No specific critique.'}`,
-          details: validationOutcomeForUpdate // Pass the whole validation outcome for context
+          details: validationOutcomeForUpdate 
         };
-      
         const geminiApiKeyForDecision = process.env.GEMINI_API_KEY;
-        const decisionEngine = new DecisionEngine(geminiApiKeyForDecision, this.addLog);
-        
+        const decisionEngine = new DecisionEngine(this.addLog, geminiApiKeyForDecision);
         const failureDecisionInput: HandleFailedTaskInput = {
-          // Pass the task state as it was when it "completed" its execution phase but failed validation
           task: { ...task, status: 'completed', result: taskResultForValidation, validationOutcome: validationOutcomeForUpdate }, 
           error: validationErrorPayload, 
         };
@@ -167,110 +161,84 @@ export class TaskExecutor {
       
         this.addLog({
             level: 'warn',
-            message: `[TaskExecutor] Decision for validation failure of task ${task.id}: ${failureDecision.action}`,
-            details: { reason: failureDecision.reason, delay: failureDecision.delayMs }
+            message: `[TE] Decision for validation failure of task ${task.id}: ${failureDecision.action}`,
+            details: { reason: failureDecision.reason, delay: failureDecision.delayMs, originalResult: String(taskResultForValidation).substring(0,100)+"..." }
         });
       
         if (failureDecision.action === 'retry' && typeof failureDecision.delayMs === 'number') {
           const newRetryCountInStore = task.retries + 1;
-          // Update task state to 'retrying' and include original (problematic) result and validation outcome.
           updateTask(missionId, task.id, {
-            status: 'retrying',
-            retries: newRetryCountInStore,
-            result: taskResultForValidation, 
+            status: 'retrying', retries: newRetryCountInStore, result: taskResultForValidation, 
             validationOutcome: validationOutcomeForUpdate, 
             failureDetails: { 
               reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. ${failureDecision.reason}`,
-              suggestedAction: failureDecision.action, // This should be 'retry'
-              originalError: validationErrorPayload.message,
+              suggestedAction: failureDecision.action, originalError: validationErrorPayload.message,
               timestamp: new Date(),
             },
           });
+          this.addLog({ level: 'warn', message: `[TE] Retrying task ${task.id} (Attempt ${newRetryCountInStore + 1} of ${DecisionEngine.MAX_TASK_RETRIES + 1}) after ${failureDecision.delayMs}ms due to validation failure.`, details: { reason: failureDecision.reason } });
           await new Promise(resolve => setTimeout(resolve, failureDecision.delayMs));
           const taskForNextExecution: Task = { ...task, retries: newRetryCountInStore, status: 'pending', result: undefined, validationOutcome: undefined, failureDetails: undefined };
-          this.addLog({level:'info', message:`[TaskExecutor] Re-executing task ${task.id} due to validation failure retry (Retry Attempt #${newRetryCountInStore}).`});
           return this.executeTask(missionId, taskForNextExecution);
-        } else { // 'abandon' or other non-retry action for the validation failure
+        } else { 
+          this.addLog({ level: 'error', message: `[TE] Task ${task.id} failed validation and will not be retried.`, details: { reason: failureDecision.reason, validationCritique: validationOutcomeForUpdate.critique }});
           updateTask(missionId, task.id, {
-            status: 'failed', // Mark as failed due to unrecoverable validation issue
-            result: taskResultForValidation, 
-            validationOutcome: validationOutcomeForUpdate,
+            status: 'failed', result: taskResultForValidation, validationOutcome: validationOutcomeForUpdate,
             failureDetails: {
-              reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. ${failureDecision.reason}`,
-              suggestedAction: failureDecision.action,
-              originalError: validationErrorPayload.message,
+              reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. Final Action: ${failureDecision.action} - ${failureDecision.reason}`,
+              suggestedAction: failureDecision.action, originalError: validationErrorPayload.message,
               timestamp: new Date(),
             },
           });
-          // Task failed validation and decision is not to retry. Fall through to finally.
-          return; // Exit after handling non-retryable validation failure.
+          return; 
         }
-      } else { // validationOutcome.isValid === true
-        // Task completed successfully AND passed validation
-        this.addLog({level:'info', message:`[TaskExecutor] Task ${task.id} completed successfully and passed validation.`});
+      } else { 
+        this.addLog({level:'info', message:`[TE] Task ${task.id} completed successfully.`, details: { resultSummary: String(taskResultForValidation).substring(0,100)+"..." }});
         updateTask(missionId, task.id, { 
-          status: 'completed', 
-          result: taskResultForValidation,
+          status: 'completed', result: taskResultForValidation,
           validationOutcome: validationOutcomeForUpdate,
-          failureDetails: undefined, // Clear previous failures
+          failureDetails: undefined, 
         });
       }
-
-    } catch (error) { // Catches errors from API calls, simulation failures, or other unexpected issues
-      finalStatus = 'failed'; // Mark for update in store (though already handled by DE path below)
+    } catch (error) { 
       const errorMessage = error instanceof Error ? error.message : String(error);
-      // Log the initial error for this specific attempt
-      this.addLog({level: 'error', message: `[TaskExecutor] Execution error task ${task.id} (Retries: ${task.retries}): ${errorMessage.substring(0,150)}...`, details: { error }});
-      // console.error is less important if addLog handles error level appropriately
+      this.addLog({level: 'error', message: `[TE] Execution error task ${task.id} (Retries: ${task.retries}): ${errorMessage.substring(0,150)}...`, details: { errorFull: error } });
       
       const geminiApiKeyForDecision = process.env.GEMINI_API_KEY;
-      const decisionEngine = new DecisionEngine(geminiApiKeyForDecision, this.addLog); 
-      const failureDecisionInput: HandleFailedTaskInput = { task, error }; // task already has its current retries
+      const decisionEngine = new DecisionEngine(this.addLog, geminiApiKeyForDecision); 
+      const failureDecisionInput: HandleFailedTaskInput = { task, error }; 
       const failureDecision = await decisionEngine.handleFailedTask(failureDecisionInput);
 
       this.addLog({
         level: 'warn', 
-        message: `[TaskExecutor] DecisionEngine suggestion for task ${task.id} (execution error): ${failureDecision.action}`, 
-        details: { reason: failureDecision.reason, delay: failureDecision.delayMs, retries: task.retries }
+        message: `[TE] DecisionEngine suggestion for task ${task.id} (execution error): ${failureDecision.action}`, 
+        details: { reason: failureDecision.reason, delay: failureDecision.delayMs, retriesSoFar: task.retries }
       });
-
-      failureDetailsForUpdate = {
-        reason: failureDecision.reason,
-        suggestedAction: failureDecision.action,
-        originalError: errorMessage,
-        timestamp: new Date(),
+      const failureDetailsForUpdate: Task['failureDetails'] = {
+        reason: failureDecision.reason, suggestedAction: failureDecision.action,
+        originalError: errorMessage, timestamp: new Date(),
       };
 
       if (failureDecision.action === 'retry' && typeof failureDecision.delayMs === 'number') {
         const retriesForNextAttempt = task.retries + 1;
-        setAgentError(`Task ${task.id} (attempt ${task.retries + 1}) failed. Retrying (will be attempt ${retriesForNextAttempt +1} of ${DecisionEngine.MAX_TASK_RETRIES +1} total attempts) after ${failureDecision.delayMs}ms. Error: ${errorMessage.substring(0,100)}...`);
-        
+        this.addLog({ level: 'warn', message: `[TE] Retrying task ${task.id} (Attempt ${retriesForNextAttempt + 1} of ${DecisionEngine.MAX_TASK_RETRIES + 1}) after ${failureDecision.delayMs}ms due to execution error.`, details: { reason: failureDecision.reason } });
         updateTask(missionId, task.id, {
-          status: 'retrying',
-          retries: retriesForNextAttempt,
-          failureDetails: failureDetailsForUpdate,
-          validationOutcome: undefined, // Clear previous validation
+          status: 'retrying', retries: retriesForNextAttempt,
+          failureDetails: failureDetailsForUpdate, validationOutcome: undefined, 
         });
-
-        console.log(`[TaskExecutor] Task ${task.id} will be retried after ${failureDecision.delayMs}ms. New retry count: ${retriesForNextAttempt}.`);
         await new Promise(resolve => setTimeout(resolve, failureDecision.delayMs));
-
         const taskForNextExecution: Task = { ...task, retries: retriesForNextAttempt, status: 'pending', failureDetails: undefined, result: undefined, validationOutcome: undefined }; 
-        console.log(`[TaskExecutor] Re-executing task ${task.id} (This is Retry Attempt #${taskForNextExecution.retries} of ${DecisionEngine.MAX_TASK_RETRIES}).`);
         return this.executeTask(missionId, taskForNextExecution); 
       } else { 
-        setAgentError(`Task ${task.id} failed permanently after ${task.retries} retries. Error: ${errorMessage.substring(0,100)}... Final Action: ${failureDecision.action}. Reason: ${failureDecision.reason}`);
+        this.addLog({ level: 'error', message: `[TE] Task ${task.id} failed permanently after ${task.retries} ${task.retries === 1 ? 'retry' : 'retries'}.`, details: { failureReason: failureDecision.reason, originalError: errorMessage }});
         updateTask(missionId, task.id, {
           status: 'failed',
           result: `Task failed after ${task.retries} ${task.retries === 1 ? 'retry' : 'retries'}. See 'failureDetails'.`,
-          failureDetails: failureDetailsForUpdate,
-          validationOutcome: undefined, // Clear previous validation
+          failureDetails: failureDetailsForUpdate, validationOutcome: undefined, 
         });
       }
     } finally {
-      // If a retry happened and returned, this finally is for the *original* call that led to retry.
-      // The recursive call will have its own finally.
-      console.log(`[TaskExecutor] Removing task ${task.id} (original instance with retries=${task.retries}) from active tasks list.`);
+      this.addLog({ level: 'debug', message: `[TE] Task ${task.id} (instance with retries=${task.retries}) finishing execution. Removing from active list.`});
       removeTaskFromActive(task.id);
     }
   }

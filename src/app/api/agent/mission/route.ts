@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Mission, Task } from '@/lib/types/agent';
 import { TaskDecomposer } from '@/lib/agent/TaskDecomposer';
-import { v4 as uuidv4 } from 'uuid'; // Using uuid for unique IDs
+import { v4 as uuidv4 } from 'uuid'; 
 import { useAgentStore } from '@/lib/agent/StateManager';
+import { LogLevel } from '@/lib/types/agent'; // For LogLevel type
 
 export async function POST(req: NextRequest) {
+  const addLog = useAgentStore.getState().addLog; // Get addLog function once
   try {
     const body = await req.json();
     const { goal } = body;
+    addLog({ level: 'system', message: '[API] Received new mission request.', details: { goal } });
 
     if (!goal || typeof goal !== 'string' || goal.trim() === '') {
       return NextResponse.json({ error: 'Goal is required and must be a non-empty string.' }, { status: 400 });
@@ -20,11 +23,13 @@ export async function POST(req: NextRequest) {
     // 4. Instantiate the TaskDecomposer with Gemini API Key
     const geminiApiKey = process.env.GEMINI_API_KEY;
     if (!geminiApiKey) {
+      const errorMsg = 'Server configuration error: Gemini API key is missing. Cannot decompose mission.';
+      addLog({ level: 'error', message: '[API] Mission creation failed due to missing Gemini API key.', details: { goal } });
       console.error('[MissionRoute] Error: GEMINI_API_KEY is not defined in environment variables.');
-      // Return a 500 error as this is a server configuration issue
-      return NextResponse.json({ error: 'Server configuration error: Gemini API key is missing. Cannot decompose mission.' }, { status: 500 });
+      return NextResponse.json({ error: errorMsg }, { status: 500 });
     }
-    const taskDecomposer = new TaskDecomposer(geminiApiKey);
+    // Pass addLog to TaskDecomposer
+    const taskDecomposer = new TaskDecomposer(geminiApiKey, addLog);
 
     // 5. Create a preliminary Mission object
     let newMission: Mission = {
@@ -41,14 +46,15 @@ export async function POST(req: NextRequest) {
     let decomposedTasks: Task[] = [];
     try {
       decomposedTasks = await taskDecomposer.decomposeMission(newMission);
-      console.log(`[MissionRoute] Mission ${missionId} decomposed into ${decomposedTasks.length} tasks.`);
-    } catch (decompositionError) {
-      console.error(`[MissionRoute] Error during task decomposition for mission ${missionId}:`, decompositionError);
-      // Decide if mission should still be created or if it's a hard failure
-      // For now, let's create it with no tasks and status 'failed' or 'pending' with error
-      newMission.status = 'failed'; // Or some other status indicating decomposition failure
-      newMission.result = decompositionError instanceof Error ? decompositionError.message : "Task decomposition failed";
-      // Still return the mission object so the client knows an attempt was made
+      // Log already happens inside decomposeMission for success/failure of that step
+    } catch (decompositionError: any) {
+      // This catch block might be redundant if decomposeMission handles its own errors and returns a fallback.
+      // However, if decomposeMission itself throws an unhandled exception, this will catch it.
+      const errorMsg = decompositionError instanceof Error ? decompositionError.message : "Task decomposition failed critically.";
+      addLog({ level: 'error', message: `[API] Critical error during task decomposition for mission ${missionId}.`, details: { error: errorMsg, goal } });
+      newMission.status = 'failed'; 
+      newMission.result = errorMsg;
+      useAgentStore.getState().createMission(newMission); // Store the failed mission attempt
       return NextResponse.json(newMission, { status: 500 }); 
     }
     
@@ -76,17 +82,17 @@ export async function POST(req: NextRequest) {
     // Note: API routes are server-side, Zustand is typically client-side.
     // Calling getState() here works because it's a direct, synchronous state update on the server instance
     // if this API route were part of a long-running server process.
-    // For Next.js serverless functions, this means the store instance is fresh per request,
-    // which won't persist state across API calls without external storage.
-    // This is suitable for our current step where the client will re-fetch or get updates.
-    useAgentStore.getState().createMission(newMission);
-    console.log(`[MissionRoute] Mission ${newMission.id} added to Zustand store (server-side instance).`);
+    // For Next.js serverless functions, this means the store instance is fresh per request, etc.
+    useAgentStore.getState().createMission(newMission); // This adds mission with tasks to store
+    addLog({ level: 'system', message: `[API] Mission ${newMission.id} created and stored.`, details: { missionId: newMission.id, goal: newMission.goal, taskCount: newMission.tasks.length } });
+    // console.log(`[MissionRoute] Mission ${newMission.id} added to Zustand store (server-side instance).`); // Replaced by addLog
 
     return NextResponse.json(newMission, { status: 201 });
 
-  } catch (error) {
-    console.error('[MissionRoute] General error creating mission:', error);
+  } catch (error: any) {
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+    addLog({ level: 'error', message: '[API] General error creating mission.', details: { error: errorMessage, goal: req.url } }); // req.url might show the goal if it was a GET, for POST use body
+    // console.error('[MissionRoute] General error creating mission:', error); // Replaced by addLog
     return NextResponse.json({ error: 'Failed to create mission', details: errorMessage }, { status: 500 });
   }
 }
