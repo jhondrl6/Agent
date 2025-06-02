@@ -1,5 +1,6 @@
 // src/lib/agent/DecisionEngine.ts
-import { Task } from '@/lib/types/agent'; // Assuming Task is correctly defined
+import { Task } from '@/lib/types/agent'; 
+import { GeminiClient, GeminiRequestParams } from '@/lib/search/GeminiClient'; // Import GeminiClient and GeminiRequestParams
 
 // Define available search providers for decision making context
 // Renamed to SearchProviderOption to avoid potential naming conflicts if
@@ -39,95 +40,180 @@ export interface HandleFailedTaskOutput {
 }
 
 export class DecisionEngine {
-  public static readonly MAX_TASK_RETRIES = 3; // Max number of retries after initial failure
-  // private llmClient: any; // Example for future LLM integration (e.g., GeminiClient)
+  public static readonly MAX_TASK_RETRIES = 3;
 
-  constructor(/* llmClient?: any */) {
-    // if (llmClient) this.llmClient = llmClient;
-    console.log('[DecisionEngine] Initialized.');
-    // For rule-based, constructor might be simple.
-    // For LLM-based, it would initialize the LLM client for more complex decisions.
+  private geminiClient?: GeminiClient;
+  private useLLMForDecisions: boolean = false;
+
+  constructor(geminiApiKey?: string) {
+    if (geminiApiKey && geminiApiKey.trim() !== '') {
+      try {
+        this.geminiClient = new GeminiClient(geminiApiKey);
+        this.useLLMForDecisions = true;
+        console.log('[DecisionEngine] Initialized with GeminiClient. LLM-based decisions enabled.');
+      } catch (error) {
+        console.warn('[DecisionEngine] Failed to initialize GeminiClient, LLM-based decisions will be disabled. Error:', error);
+        this.useLLMForDecisions = false;
+      }
+    } else {
+      console.log('[DecisionEngine] Initialized without Gemini API key. Operating in rule-based mode only.');
+      this.useLLMForDecisions = false;
+    }
   }
 
-  public chooseSearchProvider(input: ChooseSearchProviderInput): ChooseSearchProviderOutput {
+  public async chooseSearchProvider(input: ChooseSearchProviderInput): Promise<ChooseSearchProviderOutput> { // Made async
     const { taskDescription, availableProviders } = input;
+
+    if (this.useLLMForDecisions && this.geminiClient && availableProviders.length > 0 && !availableProviders.every(p => p === 'none')) {
+      console.log('[DecisionEngine] Attempting to use LLM to choose search provider for task:', `"${taskDescription}"`);
+
+      const providerListString = availableProviders.filter(p => p !== 'none').join("', '"); // Don't offer 'none' to LLM
+      // If only 'none' is available after filtering, LLM won't be helpful.
+      if (!providerListString) {
+          console.log('[DecisionEngine] No suitable providers (excluding "none") to offer to LLM. Falling back to rules.');
+      } else {
+        const systemPrompt = `You are an expert system helping an AI research agent decide which search provider to use for a given task.
+Your goal is to choose the single most suitable provider from the available options.
+Available providers: '${providerListString}'.
+
+Consider the following about the providers:
+- 'tavily': Best for comprehensive web research, finding diverse sources, and tasks requiring information for Retrieval Augmented Generation (RAG). Good for general "research X" or "find information about Y" tasks.
+- 'serper': Best for direct, quick Google searches. Use if the task implies needing Google-specific results or a very targeted web lookup (e.g., "Google search for official documentation...").
+- 'gemini': This is a powerful generative model. While not a traditional search engine, it can be used for tasks that require understanding, synthesis, complex question answering, or if the query itself is a complex question rather than a keyword search. Only choose 'gemini' if the task seems to directly ask for explanation, generation, or complex reasoning that a search engine might not provide directly, AND if 'gemini' is listed as available. It should generally be a lower preference if 'tavily' or 'serper' seem appropriate for direct information retrieval.
+
+Analyze the following task description and choose the single best provider.
+Return your choice as a VALID JSON object with two keys: "provider" (string, must be one of: '${providerListString}') and "reason" (string, a brief explanation for your choice).
+Do NOT output markdown (e.g., \`\`\`json ... \`\`\`). Output only the raw JSON object.
+
+Example Task: "Find recent scientific papers on the effects of microplastics on marine life."
+Example Output (if Tavily is available): {"provider": "tavily", "reason": "The task requires finding scientific papers, which is best handled by a comprehensive research provider like Tavily."}
+
+Example Task: "Google search for the current weather in London."
+Example Output (if Serper is available): {"provider": "serper", "reason": "The task explicitly requests a Google search for specific, real-time information."}
+`;
+
+        const userPrompt = `Task Description: "${taskDescription}"`;
+        const fullPrompt = `${systemPrompt}
+
+Okay, analyze the following task. Choose one provider from ['${providerListString}'].
+
+${userPrompt}`;
+
+        try {
+          const geminiParams: GeminiRequestParams = { prompt: fullPrompt, temperature: 0.2, maxOutputTokens: 150 };
+          const response = await this.geminiClient.generate(geminiParams);
+          const rawJsonResponse = response.candidates?.[0]?.content?.parts?.[0]?.text;
+
+          if (rawJsonResponse) {
+            console.log('[DecisionEngine] Raw JSON response from LLM for provider choice:', rawJsonResponse);
+            let cleanedJson = rawJsonResponse.trim();
+            if (cleanedJson.startsWith('```json')) {
+              cleanedJson = cleanedJson.substring(7).trim(); 
+            }
+            if (cleanedJson.endsWith('```')) {
+              cleanedJson = cleanedJson.substring(0, cleanedJson.length - 3).trim();
+            }
+            
+            const llmChoice = JSON.parse(cleanedJson) as { provider: string; reason: string };
+
+            if (llmChoice && llmChoice.provider && typeof llmChoice.reason === 'string') {
+              const chosenProvider = llmChoice.provider.toLowerCase() as SearchProviderOption;
+              if (availableProviders.includes(chosenProvider)) { // Validate against original availableProviders
+                console.log(`[DecisionEngine] LLM chose provider: ${chosenProvider}. Reason: ${llmChoice.reason}`);
+                return { provider: chosenProvider, reason: `LLM choice: ${llmChoice.reason}` };
+              } else {
+                console.warn(`[DecisionEngine] LLM chose provider "${chosenProvider}", which is not in the available list: [${availableProviders.join(', ')}]. Falling back to rules.`);
+              }
+            } else {
+              console.warn('[DecisionEngine] LLM response for provider choice was not in the expected format. Falling back to rules. Response:', llmChoice);
+            }
+          } else {
+            console.warn('[DecisionEngine] No content received from LLM for provider choice. Falling back to rules.');
+          }
+        } catch (error) {
+          console.error('[DecisionEngine] Error using LLM for provider choice, falling back to rules. Error:', error);
+        }
+      }
+    } else if (availableProviders.length === 0 || (availableProviders.length === 1 && availableProviders[0] === 'none')) {
+        console.log('[DecisionEngine] No suitable search providers available (list empty or only contains "none").');
+        return { provider: 'none', reason: 'No suitable search providers available.' };
+    }
+
+
+    // Fallback to rule-based logic if LLM not used, fails, or returns invalid choice
+    console.log('[DecisionEngine] Using rule-based logic to choose search provider for task:', `"${taskDescription}"`);
     const descriptionLower = taskDescription.toLowerCase();
-    let chosenProvider: SearchProviderOption = 'none'; // Use SearchProviderOption here
-    let reason = 'No specific provider matched; default selection.';
+    let chosenProviderByRules: SearchProviderOption = 'none';
+    let reasonByRules = 'No specific provider matched by rules; default selection.';
 
     // Rule 1: Prefer Serper for specific "Google search for..." queries
     if (descriptionLower.includes('google search for') || descriptionLower.includes('serper search for')) {
       if (availableProviders.includes('serper')) {
-        chosenProvider = 'serper';
-        reason = 'Task description explicitly or implicitly suggests Google search; Serper chosen.';
+        chosenProviderByRules = 'serper';
+        reasonByRules = 'Rule: Task explicitly or implicitly suggests Google search; Serper chosen.';
       } else if (availableProviders.includes('tavily')) { // Fallback if Serper not available
-        chosenProvider = 'tavily';
-        reason = 'Google search suggested, but Serper unavailable; falling back to Tavily.';
+        chosenProviderByRules = 'tavily';
+        reasonByRules = 'Rule: Google search suggested, but Serper unavailable; falling back to Tavily.';
       }
     } 
     // Rule 2: Prefer Tavily for general research, broad queries, or if it's the only specific one available
     else if (descriptionLower.includes('research') || descriptionLower.includes('find information on') || descriptionLower.includes('look up') || descriptionLower.includes('tavily search for')) {
       if (availableProviders.includes('tavily')) {
-        chosenProvider = 'tavily';
-        reason = 'General research query or Tavily specified; Tavily chosen for its RAG focus.';
+        chosenProviderByRules = 'tavily';
+        reasonByRules = 'Rule: General research query or Tavily specified; Tavily chosen for its RAG focus.';
       } else if (availableProviders.includes('serper')) { // Fallback if Tavily not available
-        chosenProvider = 'serper';
-        reason = 'General research query, but Tavily unavailable; falling back to Serper.';
+        chosenProviderByRules = 'serper';
+        reasonByRules = 'Rule: General research query, but Tavily unavailable; falling back to Serper.';
       }
     }
-    // Rule 3: Consider Gemini for complex queries or synthesis IF it's adapted for search-like tasks
-    // For now, this rule is a placeholder as Gemini is primarily generative.
-    // else if (descriptionLower.includes('analyze and summarize') || descriptionLower.includes('explain in detail')) {
-    //   if (availableProviders.includes('gemini')) {
-    //     chosenProvider = 'gemini';
-    //     reason = 'Complex query requiring synthesis; Gemini chosen (if adapted for search).';
-    //   }
-    // }
+    // Rule 3 is commented out as per prompt
 
-    // Default/Fallback: If no specific rules matched, or preferred provider not available
-    if (chosenProvider === 'none' || !availableProviders.includes(chosenProvider)) { 
-      // This check ensures that if a provider was tentatively chosen by a rule (e.g. Tavily for 'research')
-      // but that provider is NOT in availableProviders, we fall into this default logic.
-      // Also, if no rules matched at all (chosenProvider is still 'none'), this block is entered.
-      
+    // Default/Fallback for rule-based logic:
+    if (chosenProviderByRules === 'none' || !availableProviders.includes(chosenProviderByRules)) {
       if (availableProviders.includes('tavily')) {
-        chosenProvider = 'tavily';
-        reason = 'Default selection or previous choice unavailable: Tavily is generally preferred for research tasks.';
+        chosenProviderByRules = 'tavily';
+        reasonByRules = 'Rule Default: Tavily is generally preferred for research tasks.';
       } else if (availableProviders.includes('serper')) {
-        chosenProvider = 'serper';
-        reason = 'Default selection or previous choice unavailable: Tavily not available, Serper selected.';
+        chosenProviderByRules = 'serper';
+        reasonByRules = 'Rule Default: Tavily not available, Serper selected.';
       } else if (availableProviders.includes('gemini')) {
-        // Only choose Gemini as a last resort if it's the only one left and we have a search-like task.
-        // This assumes Gemini might be used for some direct Q&A that feels like search.
-        chosenProvider = 'gemini';
-        reason = 'Default selection or previous choice unavailable: Only Gemini available for a search-like task.';
+        chosenProviderByRules = 'gemini';
+        reasonByRules = 'Rule Default: Only Gemini available for a search-like task.';
       } else if (availableProviders.length > 0 && availableProviders[0] !== 'none' && availableProviders.includes(availableProviders[0])) {
-        // This condition is a bit redundant if the above specific fallbacks (tavily, serper, gemini) are comprehensive.
-        // It would only hit if availableProviders contains something not 'tavily', 'serper', or 'gemini'.
-        chosenProvider = availableProviders[0]; 
-        reason = `Default selection or previous choice unavailable: No specific match, picked first available provider: ${chosenProvider}.`;
+        chosenProviderByRules = availableProviders[0]; 
+        reasonByRules = `Rule Default: Picked first available provider: ${chosenProviderByRules}.`;
       } else {
-        // This is the ultimate fallback: no providers available, or only 'none' is available.
-        chosenProvider = 'none'; 
-        reason = 'No search providers available or suitable for the query.';
+        chosenProviderByRules = 'none'; 
+        reasonByRules = 'Rule Default: No suitable search providers available or "none" was the only option.';
       }
     }
     
-    // Final safety check: if chosenProvider is somehow not in availableProviders OR if availableProviders is empty, it must be 'none'.
-    if (!availableProviders.includes(chosenProvider)) {
-        console.warn(`[DecisionEngine] Chosen provider '${chosenProvider}' is not in the available list: [${availableProviders.join(', ')}]. Setting to 'none'.`);
-        chosenProvider = 'none';
-        // Update reason only if it was not already set to a "no provider" reason
-        if (reason !== 'No search providers available or suitable for the query.' && reason !== `Initial choice '${chosenProvider}' was not available or list is empty. No suitable provider found.`) {
-             reason = `Initial choice '${chosenProvider}' was not available or list is empty. No suitable provider found.`;
+    // Final safety net for rule-based decision
+    if (!availableProviders.includes(chosenProviderByRules) && chosenProviderByRules !== 'none') {
+        console.warn(`[DecisionEngine Rule-Based] Chosen provider '${chosenProviderByRules}' is not in the available list: [${availableProviders.join(', ')}]. Setting to 'none'.`);
+        chosenProviderByRules = 'none';
+        reasonByRules = `Rule Error: Initial rule choice '${chosenProviderByRules}' not available. No suitable provider found.`;
+    }
+     if (chosenProviderByRules === 'none' && !(availableProviders.length === 0 || (availableProviders.length === 1 && availableProviders[0] === 'none'))) {
+        // If rules resulted in 'none', but there are other valid providers, this is a gap in rules.
+        // For safety, pick the first valid one if any, or stick to 'none'.
+        const firstValidProvider = availableProviders.find(p => p !== 'none');
+        if (firstValidProvider) {
+            // This situation should ideally be avoided by more comprehensive rules or a final default choice.
+            console.warn(`[DecisionEngine Rule-Based] Rules resulted in 'none', but valid providers exist. Picking first valid: ${firstValidProvider}.`);
+            // chosenProviderByRules = firstValidProvider;
+            // reasonByRules = `Rule Warning: Rules defaulted to 'none', picked first valid provider '${firstValidProvider}' as a last resort.`;
+            // Sticking to 'none' if rules couldn't decide might be safer than arbitrary pick here.
+            // Forcing 'none' if rules are exhausted and didn't pick a specific provider.
+            reasonByRules = "Rule Default: No specific rule matched, and default selection process also resulted in 'none' or unavailable choice.";
+        } else {
+             reasonByRules = "Rule Default: No providers available or only 'none' is available.";
         }
     }
 
-    console.log(`[DecisionEngine] chooseSearchProvider: For task "${taskDescription}", chose '${chosenProvider}'. Reason: ${reason}`);
-    return {
-      provider: chosenProvider,
-      reason,
-    };
+
+    console.log(`[DecisionEngine] Rule-based choice for task "${taskDescription}": Provider '${chosenProviderByRules}'. Reason: ${reasonByRules}`);
+    return { provider: chosenProviderByRules, reason: reasonByRules };
   }
 
   public handleFailedTask(input: HandleFailedTaskInput): HandleFailedTaskOutput {
