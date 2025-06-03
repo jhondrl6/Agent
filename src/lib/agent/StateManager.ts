@@ -5,20 +5,23 @@ import * as logger from '../utils/logger';
 
 interface StoreState {
   missions: Record<string, Mission>;
-  agentState: AgentState;
+  agentState: AgentState; // Corresponds to AgentGlobalState
   logs: LogEntry[]; // New state for logs
 }
 
 interface StoreActions {
   createMission: (mission: Mission) => void;
   updateMission: (missionId: string, updates: Partial<Omit<Mission, 'id' | 'createdAt'>>) => void; // id and createdAt shouldn't change
+  updateMissionState: (missionId: string, missionData: Mission) => void; // New action
   clearMissions: () => void; // Added for convenience
   addTask: (missionId: string, task: Task) => void;
   addTasks: (missionId: string, tasks: Task[]) => void; // For adding multiple tasks
   updateTask: (missionId: string, taskId: string, updates: Partial<Omit<Task, 'id' | 'missionId' | 'createdAt'>>) => void;
-  setAgentLoading: (isLoading: boolean) => void;
-  setAgentError: (error?: string) => void;
-  setCurrentMissionId: (missionId?: string) => void;
+  setAgentState: (updates: Partial<AgentState>) => void; // New generic state updater
+  setAgentLoading: (isLoading: boolean, message?: string) => void; // Modified signature
+  setAgentError: (error: string | null) => void; // Modified signature
+  clearAgentError: () => void; // New action
+  setCurrentMissionId: (missionId?: string) => void; // Kept for now, but setAgentState is preferred
   addTaskToActive: (taskId: string) => void;
   removeTaskFromActive: (taskId: string) => void;
   addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
@@ -40,6 +43,18 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
   logs: [], // Initialize logs as an empty array
 
   // Actions
+  updateMissionState: (missionId: string, missionData: Mission) =>
+    set((state) => ({
+      missions: {
+        ...state.missions,
+        [missionId]: {
+          ...(state.missions[missionId] || {}),
+          ...missionData,
+          tasks: missionData.tasks ? [...missionData.tasks] : (state.missions[missionId]?.tasks || []),
+        },
+      },
+    })),
+
   createMission: (mission: Mission) => { // Added Mission type for clarity
     const missionWithEnsuredTimestamps = {
       ...mission,
@@ -154,20 +169,31 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
       return state;
     }),
 
-  setAgentLoading: (isLoading) =>
-    set((state) => ({ agentState: { ...state.agentState, isLoading } })),
+  setAgentState: (updates: Partial<AgentState>) =>
+    set((state) => ({
+      agentState: { ...state.agentState, ...updates },
+    })),
 
-  setAgentError: (error) =>
+  setAgentLoading: (isLoading: boolean, message?: string) =>
     set((state) => ({
       agentState: {
         ...state.agentState,
-        error,
-        // isLoading is managed by activeTasks count. An error in one task doesn't mean all stop loading.
-        // If a critical error requires stopping all activity, it should also clear activeTasks.
+        isLoading,
+        loadingMessage: message || (isLoading ? 'Loading...' : undefined),
       },
     })),
 
-  setCurrentMissionId: (missionId) =>
+  setAgentError: (error: string | null) =>
+    set((state) => ({
+      agentState: { ...state.agentState, error: error },
+    })),
+
+  clearAgentError: () =>
+    set((state) => ({
+      agentState: { ...state.agentState, error: null },
+    })),
+
+  setCurrentMissionId: (missionId) => // This can still be used or phased out in favor of setAgentState
     set((state) => ({ agentState: { ...state.agentState, currentMissionId: missionId } })),
 
   addTaskToActive: (taskId) =>
