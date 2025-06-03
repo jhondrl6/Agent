@@ -40,14 +40,24 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
   logs: [], // Initialize logs as an empty array
 
   // Actions
-  createMission: (mission) => {
-    const missionWithTimestamps = {
+  createMission: (mission: Mission) => { // Added Mission type for clarity
+    const missionWithEnsuredTimestamps = {
       ...mission,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: mission.createdAt || new Date(), // Use existing or set new
+      updatedAt: mission.updatedAt || new Date(), // Use existing or set new
+      // Ensure tasks also have timestamps if they are being created here for the first time
+      // However, tasks are now created via DB and should have timestamps.
+      // If tasks are part of the mission object, their timestamps should be preserved.
+      tasks: mission.tasks ? mission.tasks.map(task => ({
+        ...task,
+        createdAt: task.createdAt || new Date(),
+        updatedAt: task.updatedAt || new Date(),
+      })) : [],
     };
     set((state) => ({
-      missions: { ...state.missions, [mission.id]: missionWithTimestamps },
+      missions: { ...state.missions, [mission.id]: missionWithEnsuredTimestamps },
+      // Optionally, set currentMissionId only if it's not already set, or based on specific logic
+      // For now, keeping original logic: last created mission becomes current.
       agentState: { ...state.agentState, currentMissionId: mission.id, isLoading: false, error: undefined },
     }));
   },
