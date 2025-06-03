@@ -1,21 +1,91 @@
 // src/lib/search/SerperClient.ts
+import { LRUCache } from 'lru-cache';
 import { SerperSearchParams, SerperSearchResponse, SerperSearchResultItem } from '@/lib/types/search';
 
 const SERPER_API_URL = 'https://google.serper.dev/search';
 
+// Default Cache Configuration
+const DEFAULT_SERPER_CACHE_TTL_MS = process.env.SERPER_CACHE_TTL_MS ? parseInt(process.env.SERPER_CACHE_TTL_MS, 10) : 1000 * 60 * 30; // 30 minutes
+const DEFAULT_SERPER_CACHE_MAX_SIZE = process.env.SERPER_CACHE_MAX_SIZE ? parseInt(process.env.SERPER_CACHE_MAX_SIZE, 10) : 50;
+
+export interface SerperCacheOptions {
+  ttl?: number; // Time in milliseconds
+  maxSize?: number;
+}
+
+// Helper for deep cloning cache objects
+function deepClone<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  return JSON.parse(JSON.stringify(obj));
+}
+
 export class SerperClient {
   private apiKey: string;
+  private cache: LRUCache<string, SerperSearchResponse>;
+  private cacheEnabled: boolean;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, cacheOptions?: SerperCacheOptions) {
     if (!apiKey) {
       throw new Error('Serper API key is required.');
     }
     this.apiKey = apiKey;
     console.log('[SerperClient] Initialized.');
+
+    const ttl = cacheOptions?.ttl ?? DEFAULT_SERPER_CACHE_TTL_MS;
+    const maxSize = cacheOptions?.maxSize ?? DEFAULT_SERPER_CACHE_MAX_SIZE;
+    this.cacheEnabled = maxSize > 0 && ttl > 0;
+
+    if (this.cacheEnabled) {
+      this.cache = new LRUCache<string, SerperSearchResponse>({
+        max: maxSize,
+        ttl: ttl,
+      });
+      console.log(`[SerperClient] Response cache enabled with maxSize=${maxSize}, ttl=${ttl}ms.`);
+    } else {
+      console.log('[SerperClient] Response cache is disabled.');
+      this.cache = { get: () => undefined, set: () => false } as any as LRUCache<string, SerperSearchResponse>; // Simplified dummy
+    }
+  }
+
+  private generateCacheKey(params: SerperSearchParams): string {
+    const keyParts: Record<string, any> = {};
+    const sortedKeys = Object.keys(params).sort() as Array<keyof SerperSearchParams>;
+    for (const key of sortedKeys) {
+      if (params[key] !== undefined) {
+        keyParts[key] = params[key];
+      }
+    }
+    return JSON.stringify(keyParts);
   }
 
   async search(params: SerperSearchParams): Promise<SerperSearchResponse> {
-    console.log('[SerperClient] Performing search with query:', params.q);
+    if (!this.cacheEnabled) {
+      // console.log('[SerperClient] Cache disabled, proceeding with direct search for query:', params.q);
+      return this.directSearch(params);
+    }
+
+    const cacheKey = this.generateCacheKey(params);
+    const cachedResponse = this.cache.get(cacheKey);
+
+    if (cachedResponse) {
+      console.log('[SerperClient] Cache hit for key:', cacheKey);
+      return deepClone(cachedResponse);
+    }
+
+    console.log('[SerperClient] Cache miss for key:', cacheKey, '. Performing search with query:', params.q);
+    const response = await this.directSearch(params);
+
+    if (response) { // Only cache successful-looking responses
+      this.cache.set(cacheKey, deepClone(response));
+      console.log('[SerperClient] Response cached for key:', cacheKey);
+    }
+    return response;
+  }
+
+  private async directSearch(params: SerperSearchParams): Promise<SerperSearchResponse> {
+    // console.log('[SerperClient] Direct search with query:', params.q); // Logging now by public search or cache miss
     try {
       const requestOptions: RequestInit = {
         method: 'POST', // Serper API uses POST for /search endpoint
