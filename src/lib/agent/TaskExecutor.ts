@@ -1,4 +1,5 @@
 // src/lib/agent/TaskExecutor.ts
+import { Task as PrismaTask } from '@prisma/client'; // Renamed to avoid conflict with local Task type
 import { Task } from '@/lib/types/agent';
 import * as logger from '../utils/logger';
 import { useAgentStore } from './StateManager';
@@ -9,12 +10,27 @@ import { DecisionEngine, ChooseSearchProviderInput, SearchProviderOption, Handle
 import { ResultValidator, ValidationInput, ValidationOutput } from '@/lib/search/ResultValidator';
 import { LogLevel } from '@/lib/types/agent';
 
+export interface BackendTaskCallbacks {
+  updateTaskState: (
+    missionId: string,
+    taskId: string,
+    updates: Partial<Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>>
+  ) => Promise<void>;
+  setAgentFailure: (missionId: string, error: string) => Promise<void>;
+  trackActiveTask?: (taskId: string) => void;
+  untrackActiveTask?: (taskId: string) => void;
+}
+
 export class TaskExecutor {
   private addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
+  private backendCallbacks?: BackendTaskCallbacks;
 
-  constructor(addLogFunction: (entryData: { level: LogLevel; message: string; details?: any }) => void) {
+  constructor(
+    addLogFunction: (entryData: { level: LogLevel; message: string; details?: any }) => void,
+    backendCallbacks?: BackendTaskCallbacks
+  ) {
     this.addLog = addLogFunction;
-    // this.addLog({ level: 'debug', message: '[TE] TaskExecutor Initialized.'}); // Replaced by logger below
+    this.backendCallbacks = backendCallbacks;
     logger.debug('TaskExecutor Initialized.', 'TaskExecutor');
   }
 
@@ -29,13 +45,6 @@ export class TaskExecutor {
   }
 
   public async executeTask(missionId: string, task: Task): Promise<void> {
-    const {
-      updateTask,
-      setAgentError,
-      addTaskToActive,
-      removeTaskFromActive
-    } = useAgentStore.getState();
-
     // Log task start (very beginning)
     this.addLog({
       level: 'info',
@@ -52,15 +61,29 @@ export class TaskExecutor {
     let validationOutcomeForUpdate: ValidationOutput | undefined = undefined;
 
     try {
-      addTaskToActive(task.id);
+      if (this.backendCallbacks?.trackActiveTask) {
+        await this.backendCallbacks.trackActiveTask(task.id);
+      } else {
+        useAgentStore.getState().addTaskToActive(task.id);
+      }
+
       // Update task status to 'in-progress' and clear fields from previous attempts
-      updateTask(missionId, task.id, {
+      const initialUpdatePayload: Partial<Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>> = {
         status: 'in-progress',
-        // updatedAt will be set by updateTask
-        result: undefined,             // Explicitly clear
-        failureDetails: undefined,     // Explicitly clear
-        validationOutcome: undefined   // Explicitly clear
-      });
+        result: null, // Using null for Prisma
+        failureDetails: null, // Using null for Prisma
+        validationOutcome: null // Using null for Prisma
+      };
+      if (this.backendCallbacks?.updateTaskState) {
+        await this.backendCallbacks.updateTaskState(missionId, task.id, initialUpdatePayload);
+      } else {
+        useAgentStore.getState().updateTask(missionId, task.id, {
+          status: 'in-progress',
+          result: undefined,
+          failureDetails: undefined,
+          validationOutcome: undefined
+        });
+      }
 
       const descriptionLower = task.description.toLowerCase();
       const searchKeywords = ["search for", "find information on", "find information about", "research", "look up", "investigate", "google search for", "serper search for", "tavily search for"];
@@ -95,7 +118,11 @@ export class TaskExecutor {
             if (!tavilyApiKey) {
               taskResultForValidation = 'Configuration error: Tavily API key not found.';
               logger.error('Tavily API key (TAVILY_API_KEY) is not configured.', 'TaskExecutor', { taskId: task.id });
-              setAgentError('Tavily API key (TAVILY_API_KEY) is not configured.'); // This is a global agent error
+              if (this.backendCallbacks?.setAgentFailure) {
+                await this.backendCallbacks.setAgentFailure(missionId, 'Tavily API key (TAVILY_API_KEY) is not configured.');
+              } else {
+                useAgentStore.getState().setAgentError('Tavily API key (TAVILY_API_KEY) is not configured.');
+              }
               // This will flow to validation, fail, and be handled by DecisionEngine.
             } else {
               const tavilyClient = new TavilyClient(tavilyApiKey);
@@ -127,7 +154,11 @@ export class TaskExecutor {
             if (!serperApiKey) {
               taskResultForValidation = 'Configuration error: Serper API key not found.';
               logger.error('Serper API key (SERPER_API_KEY) is not configured.', 'TaskExecutor', { taskId: task.id });
-              setAgentError('Serper API key (SERPER_API_KEY) is not configured.'); // Global agent error
+              if (this.backendCallbacks?.setAgentFailure) {
+                await this.backendCallbacks.setAgentFailure(missionId, 'Serper API key (SERPER_API_KEY) is not configured.');
+              } else {
+                useAgentStore.getState().setAgentError('Serper API key (SERPER_API_KEY) is not configured.');
+              }
             } else {
               const serperClient = new SerperClient(serperApiKey);
               try {
@@ -234,15 +265,28 @@ export class TaskExecutor {
 
         if (failureDecision.action === 'retry' && typeof failureDecision.delayMs === 'number') {
           const newRetryCountInStore = task.retries + 1;
-          updateTask(missionId, task.id, {
-            status: 'retrying', retries: newRetryCountInStore, result: taskResultForValidation,
-            validationOutcome: validationOutcomeForUpdate,
+          const retryUpdatePayload: Partial<Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>> = {
+            status: 'retrying', retries: newRetryCountInStore, result: taskResultForValidation as string, // Assuming result is string for Prisma
+            validationOutcome: validationOutcomeForUpdate as any, // Prisma expects Json
             failureDetails: {
               reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. ${failureDecision.reason}`,
               suggestedAction: failureDecision.action, originalError: validationErrorPayload.message,
-              timestamp: new Date(),
-            },
-          });
+              timestamp: new Date().toISOString(),
+            } as any, // Prisma expects Json
+          };
+          if (this.backendCallbacks?.updateTaskState) {
+            await this.backendCallbacks.updateTaskState(missionId, task.id, retryUpdatePayload);
+          } else {
+            useAgentStore.getState().updateTask(missionId, task.id, {
+              status: 'retrying', retries: newRetryCountInStore, result: taskResultForValidation,
+              validationOutcome: validationOutcomeForUpdate,
+              failureDetails: {
+                reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. ${failureDecision.reason}`,
+                suggestedAction: failureDecision.action, originalError: validationErrorPayload.message,
+                timestamp: new Date(),
+              },
+            });
+          }
           const retryLogMsg = `Retrying task ${task.id} (Attempt ${newRetryCountInStore + 1} of ${DecisionEngine.MAX_TASK_RETRIES + 1}) after ${failureDecision.delayMs}ms due to validation failure.`;
           this.addLog({ level: 'warn', message: `[TE] ${retryLogMsg}`, details: { reason: failureDecision.reason } });
           logger.warn(retryLogMsg, 'TaskExecutor', { taskId: task.id, reason: failureDecision.reason, delay: failureDecision.delayMs });
@@ -253,25 +297,46 @@ export class TaskExecutor {
           const noRetryLogMsg = `Task ${task.id} failed validation and will not be retried.`;
           this.addLog({ level: 'error', message: `[TE] ${noRetryLogMsg}`, details: { reason: failureDecision.reason, validationCritique: validationOutcomeForUpdate.critique }});
           logger.error(noRetryLogMsg, 'TaskExecutor', { taskId: task.id, reason: failureDecision.reason, validationCritique: validationOutcomeForUpdate.critique });
-          updateTask(missionId, task.id, {
-            status: 'failed', result: taskResultForValidation, validationOutcome: validationOutcomeForUpdate,
+          const failedUpdatePayload: Partial<Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>> = {
+            status: 'failed', result: taskResultForValidation as string, validationOutcome: validationOutcomeForUpdate as any,
             failureDetails: {
               reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. Final Action: ${failureDecision.action} - ${failureDecision.reason}`,
               suggestedAction: failureDecision.action, originalError: validationErrorPayload.message,
-              timestamp: new Date(),
-            },
-          });
+              timestamp: new Date().toISOString(),
+            } as any,
+          };
+          if (this.backendCallbacks?.updateTaskState) {
+            await this.backendCallbacks.updateTaskState(missionId, task.id, failedUpdatePayload);
+          } else {
+            useAgentStore.getState().updateTask(missionId, task.id, {
+              status: 'failed', result: taskResultForValidation, validationOutcome: validationOutcomeForUpdate,
+              failureDetails: {
+                reason: `Validation Failed: ${validationOutcomeForUpdate.critique}. Final Action: ${failureDecision.action} - ${failureDecision.reason}`,
+                suggestedAction: failureDecision.action, originalError: validationErrorPayload.message,
+                timestamp: new Date(),
+              },
+            });
+          }
           return;
         }
       } else {
         const successMsg = `Task ${task.id} completed successfully.`;
         this.addLog({level:'info', message:`[TE] ${successMsg}`, details: { resultSummary: String(taskResultForValidation).substring(0,100)+"..." }});
         logger.info(successMsg, 'TaskExecutor', { taskId: task.id, resultSummary: String(taskResultForValidation).substring(0,100)+"..."});
-        updateTask(missionId, task.id, {
-          status: 'completed', result: taskResultForValidation,
-          validationOutcome: validationOutcomeForUpdate,
-          failureDetails: undefined,
-        });
+        const successUpdatePayload: Partial<Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>> = {
+          status: 'completed', result: taskResultForValidation as string,
+          validationOutcome: validationOutcomeForUpdate as any,
+          failureDetails: null, // Prisma expects null
+        };
+        if (this.backendCallbacks?.updateTaskState) {
+          await this.backendCallbacks.updateTaskState(missionId, task.id, successUpdatePayload);
+        } else {
+          useAgentStore.getState().updateTask(missionId, task.id, {
+            status: 'completed', result: taskResultForValidation,
+            validationOutcome: validationOutcomeForUpdate,
+            failureDetails: undefined,
+          });
+        }
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -291,20 +356,33 @@ export class TaskExecutor {
       });
       logger.warn(`DecisionEngine suggestion for task ${task.id} (execution error): ${failureDecision.action}`, 'TaskExecutor', deSuggestionDetails);
 
-      const failureDetailsForUpdate: Task['failureDetails'] = {
+      const failureDetailsForUpdatePrisma: Partial<Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>>['failureDetails'] = {
         reason: failureDecision.reason, suggestedAction: failureDecision.action,
-        originalError: errorMessage, timestamp: new Date(),
-      };
+        originalError: errorMessage, timestamp: new Date().toISOString(),
+      } as any; // Prisma expects Json
 
       if (failureDecision.action === 'retry' && typeof failureDecision.delayMs === 'number') {
         const retriesForNextAttempt = task.retries + 1;
         const retryExecErrorMsg = `Retrying task ${task.id} (Attempt ${retriesForNextAttempt + 1} of ${DecisionEngine.MAX_TASK_RETRIES + 1}) after ${failureDecision.delayMs}ms due to execution error.`;
         this.addLog({ level: 'warn', message: `[TE] ${retryExecErrorMsg}`, details: { reason: failureDecision.reason } });
         logger.warn(retryExecErrorMsg, 'TaskExecutor', { taskId: task.id, reason: failureDecision.reason, delay: failureDecision.delayMs });
-        updateTask(missionId, task.id, {
+
+        const retryErrorUpdatePayload: Partial<Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>> = {
           status: 'retrying', retries: retriesForNextAttempt,
-          failureDetails: failureDetailsForUpdate, validationOutcome: undefined,
-        });
+          failureDetails: failureDetailsForUpdatePrisma, validationOutcome: null, // Prisma expects null
+        };
+        if (this.backendCallbacks?.updateTaskState) {
+          await this.backendCallbacks.updateTaskState(missionId, task.id, retryErrorUpdatePayload);
+        } else {
+          useAgentStore.getState().updateTask(missionId, task.id, {
+            status: 'retrying', retries: retriesForNextAttempt,
+            failureDetails: { // For Zustand store
+              reason: failureDecision.reason, suggestedAction: failureDecision.action,
+              originalError: errorMessage, timestamp: new Date(),
+            },
+            validationOutcome: undefined,
+          });
+        }
         await new Promise(resolve => setTimeout(resolve, failureDecision.delayMs));
         const taskForNextExecution: Task = { ...task, retries: retriesForNextAttempt, status: 'pending', failureDetails: undefined, result: undefined, validationOutcome: undefined };
         return this.executeTask(missionId, taskForNextExecution);
@@ -312,16 +390,34 @@ export class TaskExecutor {
         const permFailureMsg = `Task ${task.id} failed permanently after ${task.retries} ${task.retries === 1 ? 'retry' : 'retries'}.`;
         this.addLog({ level: 'error', message: `[TE] ${permFailureMsg}`, details: { failureReason: failureDecision.reason, originalError: errorMessage }});
         logger.error(permFailureMsg, 'TaskExecutor', { taskId: task.id, failureReason: failureDecision.reason, originalError: errorMessage, retries: task.retries });
-        updateTask(missionId, task.id, {
+
+        const permFailureUpdatePayload: Partial<Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>> = {
           status: 'failed',
           result: `Task failed after ${task.retries} ${task.retries === 1 ? 'retry' : 'retries'}. See 'failureDetails'.`,
-          failureDetails: failureDetailsForUpdate, validationOutcome: undefined,
-        });
+          failureDetails: failureDetailsForUpdatePrisma, validationOutcome: null, // Prisma expects null
+        };
+        if (this.backendCallbacks?.updateTaskState) {
+          await this.backendCallbacks.updateTaskState(missionId, task.id, permFailureUpdatePayload);
+        } else {
+          useAgentStore.getState().updateTask(missionId, task.id, {
+            status: 'failed',
+            result: `Task failed after ${task.retries} ${task.retries === 1 ? 'retry' : 'retries'}. See 'failureDetails'.`,
+            failureDetails: { // For Zustand store
+              reason: failureDecision.reason, suggestedAction: failureDecision.action,
+              originalError: errorMessage, timestamp: new Date(),
+            },
+            validationOutcome: undefined,
+          });
+        }
       }
     } finally {
       this.addLog({ level: 'debug', message: `[TE] Task ${task.id} (instance with retries=${task.retries}) finishing execution. Removing from active list.`});
       logger.debug(`Task ${task.id} (instance with retries=${task.retries}) finishing execution. Removing from active list.`, 'TaskExecutor', { taskId: task.id, finalRetries: task.retries });
-      removeTaskFromActive(task.id);
+      if (this.backendCallbacks?.untrackActiveTask) {
+        await this.backendCallbacks.untrackActiveTask(task.id);
+      } else {
+        useAgentStore.getState().removeTaskFromActive(task.id);
+      }
     }
   }
 }
