@@ -2,7 +2,7 @@
 'use client';
 import React from 'react';
 import { Task } from '@/lib/types/agent';
-import { getStatusPillClasses } from './utils'; 
+import { getStatusPillClasses } from './utils';
 import { DecisionEngine } from '@/lib/agent/DecisionEngine'; // For MAX_TASK_RETRIES
 
 interface TaskListItemProps {
@@ -12,7 +12,7 @@ interface TaskListItemProps {
 
 const TaskListItemInternal = ({ task, onTaskClick }: TaskListItemProps) => {
   // console.log(`[TaskListItem] Rendering ${task.id} - Status: ${task.status}`); // For debugging memoization
-  
+
   let previewText = "";
   let previewTitle = "";
 
@@ -43,7 +43,7 @@ const TaskListItemInternal = ({ task, onTaskClick }: TaskListItemProps) => {
 
 
   return (
-    <li 
+    <li
       className="p-3 border border-gray-200 rounded-lg bg-white shadow-sm hover:shadow-md hover:border-blue-400 transition-all duration-150 ease-in-out cursor-pointer group"
       onClick={() => onTaskClick(task)}
       role="button"

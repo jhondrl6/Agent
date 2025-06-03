@@ -34,11 +34,11 @@ import type { ValidationOutput } from '@/lib/search/ResultValidator';
 export type LogLevel = 'info' | 'error' | 'warn' | 'debug' | 'system';
 
 export interface LogEntry {
-  id: string; 
+  id: string;
   timestamp: Date;
   level: LogLevel;
   message: string;
-  details?: any; 
+  details?: any;
 }
 
 export interface AgentState {

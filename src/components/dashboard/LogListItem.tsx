@@ -1,7 +1,7 @@
 // src/components/dashboard/LogListItem.tsx
 'use client';
 import React from 'react';
-import { LogEntry } from '@/lib/types/agent'; 
+import { LogEntry } from '@/lib/types/agent';
 import { getLogLevelTailwindClasses, formatLogTimestamp } from './utils';
 
 interface LogListItemProps {
@@ -13,7 +13,7 @@ const LogListItemInternal = ({ log }: LogListItemProps) => {
   const levelClasses = getLogLevelTailwindClasses(log.level);
 
   return (
-    <div 
+    <div
       className={`p-2 rounded-md border-l-4 ${levelClasses.border} ${levelClasses.bg}`}
     >
       <div className="flex items-center text-xs mb-0.5">

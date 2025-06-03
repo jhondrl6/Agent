@@ -2,7 +2,7 @@ import { GoogleGenerativeAI, GenerativeModel, GenerationConfig, HarmCategory, Ha
 import { GeminiRequestParams, GeminiResponse } from '@/lib/types/search';
 
 // Default model to use if not specified in params
-const DEFAULT_MODEL_NAME = "gemini-pro"; 
+const DEFAULT_MODEL_NAME = "gemini-pro";
 
 export class GeminiClient {
   private genAI: GoogleGenerativeAI;
@@ -17,7 +17,7 @@ export class GeminiClient {
 
   async generate(params: GeminiRequestParams): Promise<GeminiResponse> {
     console.log('[GeminiClient] Generating content for prompt:', params.prompt);
-    
+
     try {
       const modelName = params.model || DEFAULT_MODEL_NAME;
       const model: GenerativeModel = this.genAI.getGenerativeModel({ model: modelName });
@@ -66,14 +66,14 @@ export class GeminiClient {
             role: candidate.content.role,
           },
           // You might need to map other fields like finishReason, safetyRatings, etc.
-          // finishReason: candidate.finishReason, 
+          // finishReason: candidate.finishReason,
           // safetyRatings: candidate.safetyRatings,
         })) || [],
         // The SDK's main response text can be found using response.text()
         // We'll put it in the first candidate's part for simplicity if candidates array is empty but text() exists
         // This part needs careful handling based on how you want to structure GeminiResponse
       };
-      
+
       // If candidates array is empty but response.text() provides content, populate it.
       if (adaptedResponse.candidates.length === 0 && sdkResponse.text) {
         try {
@@ -82,7 +82,7 @@ export class GeminiClient {
                 adaptedResponse.candidates.push({
                     content: {
                         parts: [{ text: text }],
-                        role: 'model' 
+                        role: 'model'
                     }
                 });
             }
@@ -115,11 +115,11 @@ async function testGeminiSdk() {
   }
   const client = new GeminiClient(apiKey);
   try {
-    const response = await client.generate({ 
+    const response = await client.generate({
       prompt: 'Tell me a fun fact about the Roman Empire.',
-      maxOutputTokens: 150 
+      maxOutputTokens: 150
     });
-    
+
     if (response.candidates && response.candidates.length > 0 && response.candidates[0].content.parts.length > 0) {
       console.log('[GeminiClient Test SDK] Response text:', response.candidates[0].content.parts[0].text);
     } else {
@@ -133,5 +133,5 @@ async function testGeminiSdk() {
 // To run the test:
 // 1. Make sure GEMINI_API_KEY is in your .env.local
 // 2. Uncomment the next line
-// testGeminiSdk(); 
+// testGeminiSdk();
 */

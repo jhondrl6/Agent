@@ -1,6 +1,6 @@
 // src/app/api/search/tavily/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { TavilyClient } from '@/lib/search/TavilyClient'; 
+import { TavilyClient } from '@/lib/search/TavilyClient';
 import { TavilySearchParams } from '@/lib/types/search';
 
 export async function POST(req: NextRequest) {
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     }
 
     const client = new TavilyClient(apiKey);
-    
+
     // Construct the search parameters, only including defined values to avoid overriding SDK defaults with undefined
     const searchParams: TavilySearchParams = { query };
     if (search_depth !== undefined) searchParams.search_depth = search_depth;
@@ -28,8 +28,8 @@ export async function POST(req: NextRequest) {
     if (max_results !== undefined) searchParams.max_results = max_results;
     if (include_domains !== undefined) searchParams.include_domains = include_domains;
     if (exclude_domains !== undefined) searchParams.exclude_domains = exclude_domains;
-            
-    const results = await client.search(searchParams); 
+
+    const results = await client.search(searchParams);
     return NextResponse.json(results);
 
   } catch (error) {

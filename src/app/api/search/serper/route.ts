@@ -1,6 +1,6 @@
 // src/app/api/search/serper/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { SerperClient } from '@/lib/search/SerperClient'; 
+import { SerperClient } from '@/lib/search/SerperClient';
 import { SerperSearchParams } from '@/lib/types/search';
 
 export async function POST(req: NextRequest) {
@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
     }
 
     const client = new SerperClient(apiKey);
-    
+
     // Construct searchParams object, passing only defined values
     const searchParams: SerperSearchParams = { q };
     if (num !== undefined) searchParams.num = num;
@@ -29,8 +29,8 @@ export async function POST(req: NextRequest) {
     if (hl !== undefined) searchParams.hl = hl;
     if (autocorrect !== undefined) searchParams.autocorrect = autocorrect;
     if (type !== undefined) searchParams.type = type;
-            
-    const results = await client.search(searchParams); 
+
+    const results = await client.search(searchParams);
     return NextResponse.json(results);
 
   } catch (error) {

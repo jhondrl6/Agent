@@ -1,10 +1,10 @@
 // src/lib/search/ResultValidator.ts
-import { Task } from '@/lib/types/agent'; 
+import { Task } from '@/lib/types/agent';
 import { DecisionEngine } from '@/lib/agent/DecisionEngine'; // Import DecisionEngine for MAX_TASK_RETRIES
 
 // Define possible actions based on validation, for future DecisionEngine use
-export type ValidationSuggestedAction = 
-  | 'accept' 
+export type ValidationSuggestedAction =
+  | 'accept'
   | 'retry_task_new_params' // e.g., different query for the same task
   | 'refine_query'          // Similar to above, but more specific to query
   | 'alternative_source'    // Try a different search provider or method
@@ -45,7 +45,7 @@ export class ResultValidator {
         qualityScore: 0.0,
         critique: 'Result is empty or missing.',
         // Use DecisionEngine's MAX_TASK_RETRIES to inform suggestion
-        suggestedAction: task.retries < DecisionEngine.MAX_TASK_RETRIES ? 'retry_task_new_params' : 'alternative_source', 
+        suggestedAction: task.retries < DecisionEngine.MAX_TASK_RETRIES ? 'retry_task_new_params' : 'alternative_source',
       };
     }
 
@@ -54,7 +54,7 @@ export class ResultValidator {
       'api key invalid', 'api key not configured', 'authentication failed',
       'error occurred', 'failed to fetch', 'cannot connect', 'service unavailable',
       'no results found', 'search returned no results', 'query format incorrect',
-      'parameter invalid', 'bad request', 'page not found', '400 bad request', '401 unauthorized', 
+      'parameter invalid', 'bad request', 'page not found', '400 bad request', '401 unauthorized',
       '403 forbidden', '404 not found', '500 internal server error', '503 service unavailable',
       'configuration error:', // Custom error prefix from our system
       'execution error:', // Custom error prefix from our system
@@ -73,11 +73,11 @@ export class ResultValidator {
         };
       }
     }
-    
+
     // 4. Check for "placeholder" or "not implemented" style results from our own system (if applicable)
     // (Moved before length check, as placeholders can be short)
     const placeholderSubstrings = [
-        "simulated success for:", 
+        "simulated success for:",
         "gemini search chosen - execution path not fully implemented", // Specific placeholder
         "gemini search chosen - execution path is a placeholder", // Variation
         "search did not produce results" // Generic message from TaskExecutor for some paths
@@ -97,7 +97,7 @@ export class ResultValidator {
     const minLengthThreshold = 50; // characters; configurable
     if (resultString.length < minLengthThreshold) {
       return {
-        isValid: false, 
+        isValid: false,
         qualityScore: 0.3,
         critique: `Result is very short (length: ${resultString.length} chars). May not be sufficient unless a specific, concise answer was expected.`,
         suggestedAction: task.retries < DecisionEngine.MAX_TASK_RETRIES ? 'refine_query' : 'alternative_source',

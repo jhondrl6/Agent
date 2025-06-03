@@ -90,7 +90,7 @@ export interface SearchParams {
   query: string;
   provider: SearchProvider;
   // Add other common parameters, or use a union type for provider-specific params
-  tavilyParams?: Omit<TavilySearchParams, 'query'>; 
+  tavilyParams?: Omit<TavilySearchParams, 'query'>;
   serperParams?: Omit<SerperSearchParams, 'q'>; // Updated reference
   geminiParams?: Omit<GeminiRequestParams, 'prompt'>;
 }

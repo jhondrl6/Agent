@@ -1,7 +1,7 @@
 // src/lib/agent/DecisionEngine.ts
-import { Task } from '@/lib/types/agent'; 
-import { GeminiClient, GeminiRequestParams } from '@/lib/search/GeminiClient'; 
-import { LogLevel } from '@/lib/types/agent'; 
+import { Task } from '@/lib/types/agent';
+import { GeminiClient, GeminiRequestParams } from '@/lib/search/GeminiClient';
+import { LogLevel } from '@/lib/types/agent';
 
 // Define available search providers for decision making context
 export type SearchProviderOption = 'tavily' | 'serper' | 'gemini' | 'none';
@@ -9,13 +9,13 @@ export type SearchProviderOption = 'tavily' | 'serper' | 'gemini' | 'none';
 // Input for choosing a search provider
 export interface ChooseSearchProviderInput {
   taskDescription: string;
-  availableProviders: SearchProviderOption[]; 
+  availableProviders: SearchProviderOption[];
 }
 
 // Output for choosing a search provider
 export interface ChooseSearchProviderOutput {
   provider: SearchProviderOption;
-  reason: string; 
+  reason: string;
 }
 
 // Define possible actions for a failed task
@@ -23,15 +23,15 @@ export type FailedTaskAction = 'retry' | 'abandon' | 're-plan' | 'escalate';
 
 // Input for handling a failed task
 export interface HandleFailedTaskInput {
-  task: Task; 
-  error: any; 
+  task: Task;
+  error: any;
 }
 
 // Output for handling a failed task
 export interface HandleFailedTaskOutput {
   action: FailedTaskAction;
-  reason: string; 
-  delayMs?: number; 
+  reason: string;
+  delayMs?: number;
 }
 
 export class DecisionEngine {
@@ -48,7 +48,7 @@ export class DecisionEngine {
     this.addLog = addLogFunction;
     if (geminiApiKey && geminiApiKey.trim() !== '') {
       try {
-        this.geminiClient = new GeminiClient(geminiApiKey); 
+        this.geminiClient = new GeminiClient(geminiApiKey);
         this.useLLMForDecisions = true;
         this.addLog({ level: 'info', message: '[DE] Initialized with GeminiClient. LLM-based decisions ENABLED.' });
       } catch (error: any) {
@@ -61,13 +61,13 @@ export class DecisionEngine {
     }
   }
 
-  public async chooseSearchProvider(input: ChooseSearchProviderInput): Promise<ChooseSearchProviderOutput> { 
+  public async chooseSearchProvider(input: ChooseSearchProviderInput): Promise<ChooseSearchProviderOutput> {
     const { taskDescription, availableProviders } = input;
     this.addLog({ level: 'info', message: '[DE] Choosing search provider.', details: { task: taskDescription.substring(0,100)+"...", available: availableProviders } });
 
     if (this.useLLMForDecisions && this.geminiClient && availableProviders.length > 0 && !availableProviders.every(p => p === 'none')) {
       this.addLog({ level: 'debug', message: '[DE] Attempting LLM for provider choice for task.', details: { taskDescription: taskDescription.substring(0,100)+"..." } });
-      const providerListString = availableProviders.filter(p => p !== 'none').join("', '"); 
+      const providerListString = availableProviders.filter(p => p !== 'none').join("', '");
       if (!providerListString) {
           this.addLog({ level: 'debug', message: '[DE] No suitable providers (excluding "none") to offer to LLM. Falling back to rules.' });
       } else {
@@ -95,12 +95,12 @@ Example Output (if Serper is available): {"provider": "serper", "reason": "The t
           if (rawJsonResponse) {
             this.addLog({level: 'debug', message: `[DE] LLM raw response for provider choice: ${rawJsonResponse.substring(0,100)}...`});
             let cleanedJson = rawJsonResponse.trim();
-            if (cleanedJson.startsWith('```json')) cleanedJson = cleanedJson.substring(7).trim(); 
+            if (cleanedJson.startsWith('```json')) cleanedJson = cleanedJson.substring(7).trim();
             if (cleanedJson.endsWith('```')) cleanedJson = cleanedJson.substring(0, cleanedJson.length - 3).trim();
             const llmChoice = JSON.parse(cleanedJson) as { provider: string; reason: string };
             if (llmChoice && llmChoice.provider && typeof llmChoice.reason === 'string') {
               const chosenProvider = llmChoice.provider.toLowerCase() as SearchProviderOption;
-              if (availableProviders.includes(chosenProvider)) { 
+              if (availableProviders.includes(chosenProvider)) {
                 const output = { provider: chosenProvider, reason: `LLM choice: ${llmChoice.reason}` };
                 this.addLog({ level: 'info', message: `[DE] LLM Chose provider: ${output.provider}`, details: { reason: output.reason } });
                 return output;
@@ -139,8 +139,8 @@ Example Output (if Serper is available): {"provider": "serper", "reason": "The t
       if (availableProviders.includes('tavily')) chosenProviderByRules = 'tavily';
       else if (availableProviders.includes('serper')) chosenProviderByRules = 'serper';
       else if (availableProviders.includes('gemini')) chosenProviderByRules = 'gemini';
-      else if (availableProviders.length > 0 && availableProviders[0] !== 'none' && availableProviders.includes(availableProviders[0])) chosenProviderByRules = availableProviders[0]; 
-      else chosenProviderByRules = 'none'; 
+      else if (availableProviders.length > 0 && availableProviders[0] !== 'none' && availableProviders.includes(availableProviders[0])) chosenProviderByRules = availableProviders[0];
+      else chosenProviderByRules = 'none';
       reasonByRules = 'Rule Default: Default selection process. Chosen: ' + chosenProviderByRules;
     }
     if (!availableProviders.includes(chosenProviderByRules) && chosenProviderByRules !== 'none') {
@@ -161,19 +161,19 @@ Example Output (if Serper is available): {"provider": "serper", "reason": "The t
     return { provider: chosenProviderByRules, reason: reasonByRules };
   }
 
-  public async handleFailedTask(input: HandleFailedTaskInput): Promise<HandleFailedTaskOutput> { 
-    const { task, error } = input; 
-    const validationOutcome = task.validationOutcome; 
+  public async handleFailedTask(input: HandleFailedTaskInput): Promise<HandleFailedTaskOutput> {
+    const { task, error } = input;
+    const validationOutcome = task.validationOutcome;
 
     let effectiveErrorMessage = (typeof error === 'string' ? error : (error?.message || 'Unknown execution error')).toLowerCase();
     let isValidationFailure = false;
-    const originalErrorForPrompt = typeof error === 'string' ? error : (error?.message || 'Unknown execution error'); 
+    const originalErrorForPrompt = typeof error === 'string' ? error : (error?.message || 'Unknown execution error');
     const errorStack = typeof error !== 'string' && error?.stack ? error.stack : 'No stack available.';
     const errorStatusCode = (typeof error === 'object' && error !== null && 'status' in error) ? (error as any).status : undefined;
-    
-    this.addLog({ 
-        level: 'warn', 
-        message: `[DE] Handling failure for task ${task.id}. Initial error: ${effectiveErrorMessage.substring(0,100)}...`, 
+
+    this.addLog({
+        level: 'warn',
+        message: `[DE] Handling failure for task ${task.id}. Initial error: ${effectiveErrorMessage.substring(0,100)}...`,
         details: { taskId: task.id, error: originalErrorForPrompt, validationOutcome, retries: task.retries }
     });
 
@@ -240,7 +240,7 @@ ${failureHistoryContext}`;
                 if (typeof delay !== 'number' || delay <= 0) {
                   const defaultDelay = 1000 * Math.pow(2, task.retries);
                   this.addLog({level: 'warn', message: `[DE] LLM retry for task ${task.id} had invalid delayMs (${delay}). Defaulting.`, details: { defaultDelay }});
-                  delay = defaultDelay; 
+                  delay = defaultDelay;
                 }
               } else { delay = undefined; }
               this.addLog({level: 'info', message: `[DE] LLM decision for task ${task.id} failure: ${action}. Reason: ${llmChoice.reason}`});
@@ -252,8 +252,8 @@ ${failureHistoryContext}`;
     }
 
     this.addLog({level: 'debug', message: `[DE] Using rule-based logic for task ${task.id} failure. IsValidationFailure: ${isValidationFailure}`});
-    const currentRuleErrorMessage = effectiveErrorMessage; 
-    let action_rule: FailedTaskAction = 'abandon'; 
+    const currentRuleErrorMessage = effectiveErrorMessage;
+    let action_rule: FailedTaskAction = 'abandon';
     let reason_rule = 'Default: Unknown error or max retries exceeded.';
     let delayMs_rule: number | undefined = undefined;
 
@@ -261,8 +261,8 @@ ${failureHistoryContext}`;
       this.addLog({level: 'debug', message: `[DE] Applying rules for validation failure for task ${task.id}. Validator critique: ${validationOutcome?.critique}`});
       const validatorSuggestedAction = validationOutcome?.suggestedAction;
       if (task.retries < DecisionEngine.MAX_TASK_RETRIES) {
-        action_rule = 'retry'; 
-        delayMs_rule = 1000 * Math.pow(2, task.retries); 
+        action_rule = 'retry';
+        delayMs_rule = 1000 * Math.pow(2, task.retries);
         reason_rule = `Rule-based: Validation failed ("${validationOutcome?.critique || 'No critique.'}"). `;
         if (validatorSuggestedAction === 'refine_query' || validatorSuggestedAction === 'retry_task_new_params') reason_rule += `Validator suggested ${validatorSuggestedAction}. Suggesting retry #${task.retries + 1}.`;
         else if (validatorSuggestedAction === 'alternative_source') reason_rule += `Validator suggested trying an alternative source. Suggesting retry (caller might try different source/params).`;
@@ -272,24 +272,24 @@ ${failureHistoryContext}`;
         reason_rule = `Rule-based: Validation failed ("${validationOutcome?.critique || 'No critique.'}"), and max retries reached.`;
       }
       this.addLog({level: 'info', message: `[DE] Rule-based decision for task ${task.id} (validation failure): ${action_rule}. Reason: ${reason_rule}`});
-      return { action: action_rule, reason: reason_rule, delayMs: delayMs_rule }; 
+      return { action: action_rule, reason: reason_rule, delayMs: delayMs_rule };
     }
 
     if (currentRuleErrorMessage.includes('network error') || currentRuleErrorMessage.includes('socket hang up') || currentRuleErrorMessage.includes('timeout') || currentRuleErrorMessage.includes('etimedout') || currentRuleErrorMessage.includes('econnreset') || currentRuleErrorMessage.includes('service unavailable') || currentRuleErrorMessage.includes('rate limit exceeded') || currentRuleErrorMessage.includes('tavily api rate limit exceeded') || currentRuleErrorMessage.includes('gemini sdk error: 429') || (errorStatusCode === 429 || errorStatusCode === 503 || errorStatusCode === 504)) {
-      if (task.retries < DecisionEngine.MAX_TASK_RETRIES) { 
-        action_rule = 'retry'; delayMs_rule = 1000 * Math.pow(2, task.retries); 
+      if (task.retries < DecisionEngine.MAX_TASK_RETRIES) {
+        action_rule = 'retry'; delayMs_rule = 1000 * Math.pow(2, task.retries);
         reason_rule = `Rule-based: Transient error detected ("${currentRuleErrorMessage}"). Suggesting retry #${task.retries + 1} after ${delayMs_rule/1000}s.`;
       } else { action_rule = 'abandon'; reason_rule = `Rule-based: Transient error detected, but max retries (${DecisionEngine.MAX_TASK_RETRIES}) reached. Original error: "${currentRuleErrorMessage}"`;}
     } else if (currentRuleErrorMessage.includes('api key not configured') || currentRuleErrorMessage.includes('invalid api key') || currentRuleErrorMessage.includes('api key invalid') || currentRuleErrorMessage.includes('authentication failed') || currentRuleErrorMessage.includes('unauthorized') || (errorStatusCode === 401 || errorStatusCode === 403)) {
       action_rule = 'abandon'; reason_rule = `Rule-based: Configuration error ("${currentRuleErrorMessage}"). Suggesting abandon.`;
     } else if (currentRuleErrorMessage.includes('bad request') || currentRuleErrorMessage.includes('invalid parameter') || currentRuleErrorMessage.includes('query format incorrect') || currentRuleErrorMessage.includes('invalid input') || (errorStatusCode === 400)) {
       action_rule = 'abandon'; reason_rule = `Rule-based: Invalid input/bad request ("${currentRuleErrorMessage}"). Suggesting abandon.`;
-    } else if (currentRuleErrorMessage.includes('blocked due to safety settings') || currentRuleErrorMessage.includes('prompt blocked') || currentRuleErrorMessage.includes('promptfeedback.blockreason')) { 
+    } else if (currentRuleErrorMessage.includes('blocked due to safety settings') || currentRuleErrorMessage.includes('prompt blocked') || currentRuleErrorMessage.includes('promptfeedback.blockreason')) {
       action_rule = 'abandon'; reason_rule = `Rule-based: Content safety restriction ("${currentRuleErrorMessage}"). Suggesting abandon.`;
     } else if (task.retries >= DecisionEngine.MAX_TASK_RETRIES) {
       action_rule = 'abandon'; reason_rule = `Rule-based: Max retries (${DecisionEngine.MAX_TASK_RETRIES}) reached with unclassified error: "${currentRuleErrorMessage}"`;
     } else if (task.retries < DecisionEngine.MAX_TASK_RETRIES) {
-      action_rule = 'retry'; delayMs_rule = 1000 * Math.pow(2, task.retries); 
+      action_rule = 'retry'; delayMs_rule = 1000 * Math.pow(2, task.retries);
       reason_rule = `Rule-based: Unclassified error ("${currentRuleErrorMessage}"), retries remaining. Suggesting retry #${task.retries + 1} after ${delayMs_rule/1000}s.`;
     }
     this.addLog({level: 'info', message: `[DE] Rule-based decision for task ${task.id} failure: ${action_rule}. Reason: ${reason_rule}`});

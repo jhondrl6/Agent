@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Mission, Task } from '@/lib/types/agent';
 import { TaskDecomposer } from '@/lib/agent/TaskDecomposer';
-import { v4 as uuidv4 } from 'uuid'; 
+import { v4 as uuidv4 } from 'uuid';
 import { useAgentStore } from '@/lib/agent/StateManager';
 import { LogLevel } from '@/lib/types/agent'; // For LogLevel type
 
@@ -52,16 +52,16 @@ export async function POST(req: NextRequest) {
       // However, if decomposeMission itself throws an unhandled exception, this will catch it.
       const errorMsg = decompositionError instanceof Error ? decompositionError.message : "Task decomposition failed critically.";
       addLog({ level: 'error', message: `[API] Critical error during task decomposition for mission ${missionId}.`, details: { error: errorMsg, goal } });
-      newMission.status = 'failed'; 
+      newMission.status = 'failed';
       newMission.result = errorMsg;
       useAgentStore.getState().createMission(newMission); // Store the failed mission attempt
-      return NextResponse.json(newMission, { status: 500 }); 
+      return NextResponse.json(newMission, { status: 500 });
     }
-    
+
     // 7. Update newMission.tasks with the decomposed tasks
     newMission.tasks = decomposedTasks;
 
-    // 8. Update newMission.status 
+    // 8. Update newMission.status
     //    If tasks are generated, it's ready to be picked up or is 'in-progress' if auto-started.
     //    For now, let's set to 'pending' implying it's ready for execution.
     if (decomposedTasks.length > 0) {
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
 
     // 10. Return the newMission object
     // Use 201 Created status code for successful creation
-    
+
     // Update the Zustand store
     // Note: API routes are server-side, Zustand is typically client-side.
     // Calling getState() here works because it's a direct, synchronous state update on the server instance

@@ -20,7 +20,7 @@ export class TavilyClient {
       // The SDK's search method takes (query: string, options?: SearchOptions)
       // SearchOptions include: searchDepth, maxResults, includeDomains, excludeDomains, includeAnswer, includeRawContent, etc.
       const { query, ...options } = params;
-      
+
       // Ensure options are correctly named as per SDK if they differ from our param names
       const searchOptions = {
         searchDepth: options.search_depth,
@@ -38,15 +38,15 @@ export class TavilyClient {
           delete (searchOptions as any)[key];
         }
       });
-      
+
       // The Tavily SDK's search method might return a slightly different structure.
       // We need to adapt it to our TavilySearchResponse and TavilySearchResultItem.
       // Based on typical Tavily API responses:
       const sdkResponse = await this.client.search(query, searchOptions);
-      
+
       // Assuming sdkResponse has fields like: query, answer, response_time, results (array)
       // And each item in results has: title, url, content, score, raw_content
-      
+
       if (!sdkResponse || !sdkResponse.results) {
         console.warn('[TavilyClient] Received an unexpected or empty response from Tavily SDK:', sdkResponse);
         // Return a valid empty response structure
@@ -92,13 +92,13 @@ async function testTavilySearch() {
   }
   const client = new TavilyClient(apiKey);
   try {
-    const response = await client.search({ 
+    const response = await client.search({
       query: 'What are the latest advancements in AI?',
       search_depth: 'advanced',
       max_results: 3,
       include_answer: true,
     });
-    
+
     console.log('[TavilyClient Test] Search Response:', JSON.stringify(response, null, 2));
     if (response.answer) {
         console.log('[TavilyClient Test] Answer:', response.answer);
