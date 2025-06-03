@@ -2,6 +2,7 @@
 'use client';
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
+import { error as logError } from '../lib/utils/logger';
 
 interface Props {
   children: ReactNode;
@@ -30,15 +31,15 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    const componentContext = this.props.componentName ? `in component ${this.props.componentName}` : '';
-    console.error(`[ErrorBoundary] Uncaught error ${componentContext}:`, error, errorInfo);
+    const componentContext = this.props.componentName || 'UnknownComponent';
+    logError(
+      `Uncaught error`,
+      `ErrorBoundary [${componentContext}]`,
+      error,
+      { componentStack: errorInfo.componentStack }
+    );
 
     this.setState({ errorInfo });
-
-    // TODO: Integrate with global logger if available and appropriate for client-side UI errors
-    // e.g., if (typeof window !== 'undefined' && (window as any).agentAddLog) {
-    //   (window as any).agentAddLog({ level: 'error', message: `UI Error ${componentContext}: ${error.message}`, details: { stack: errorInfo.componentStack } });
-    // }
   }
 
   private handleTryAgain = () => {

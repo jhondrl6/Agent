@@ -2,6 +2,7 @@
 import { Task } from '@/lib/types/agent';
 import { GeminiClient, GeminiRequestParams } from '@/lib/search/GeminiClient';
 import { LogLevel } from '@/lib/types/agent';
+import * as logger from '../utils/logger';
 
 // Define available search providers for decision making context
 export type SearchProviderOption = 'tavily' | 'serper' | 'gemini' | 'none';
@@ -51,12 +52,15 @@ export class DecisionEngine {
         this.geminiClient = new GeminiClient(geminiApiKey);
         this.useLLMForDecisions = true;
         this.addLog({ level: 'info', message: '[DE] Initialized with GeminiClient. LLM-based decisions ENABLED.' });
+        logger.info('Initialized with GeminiClient. LLM-based decisions ENABLED.', 'DecisionEngine');
       } catch (error: any) {
         this.addLog({ level: 'warn', message: '[DE] Failed to initialize GeminiClient. LLM-based decisions DISABLED.', details: { error: error.message } });
+        logger.warn('Failed to initialize GeminiClient. LLM-based decisions DISABLED.', 'DecisionEngine', error);
         this.useLLMForDecisions = false;
       }
     } else {
       this.addLog({ level: 'info', message: '[DE] Initialized without Gemini API key. Operating in rule-based mode only.' });
+      logger.info('Initialized without Gemini API key. Operating in rule-based mode only.', 'DecisionEngine');
       this.useLLMForDecisions = false;
     }
   }
@@ -64,12 +68,15 @@ export class DecisionEngine {
   public async chooseSearchProvider(input: ChooseSearchProviderInput): Promise<ChooseSearchProviderOutput> {
     const { taskDescription, availableProviders } = input;
     this.addLog({ level: 'info', message: '[DE] Choosing search provider.', details: { task: taskDescription.substring(0,100)+"...", available: availableProviders } });
+    logger.debug(`Choosing search provider for task: ${taskDescription.substring(0,100)}...`, 'DecisionEngine', { availableProviders });
 
     if (this.useLLMForDecisions && this.geminiClient && availableProviders.length > 0 && !availableProviders.every(p => p === 'none')) {
       this.addLog({ level: 'debug', message: '[DE] Attempting LLM for provider choice for task.', details: { taskDescription: taskDescription.substring(0,100)+"..." } });
+      logger.debug(`Attempting LLM for provider choice for task: ${taskDescription.substring(0,100)}...`, 'DecisionEngine');
       const providerListString = availableProviders.filter(p => p !== 'none').join("', '");
       if (!providerListString) {
           this.addLog({ level: 'debug', message: '[DE] No suitable providers (excluding "none") to offer to LLM. Falling back to rules.' });
+          logger.debug('No suitable providers (excluding "none") to offer to LLM. Falling back to rules.', 'DecisionEngine');
       } else {
         const systemPrompt = `You are an expert system helping an AI research agent decide which search provider to use for a given task.
 Your goal is to choose the single most suitable provider from the available options.
@@ -103,26 +110,33 @@ Example Output (if Serper is available): {"provider": "serper", "reason": "The t
               if (availableProviders.includes(chosenProvider)) {
                 const output = { provider: chosenProvider, reason: `LLM choice: ${llmChoice.reason}` };
                 this.addLog({ level: 'info', message: `[DE] LLM Chose provider: ${output.provider}`, details: { reason: output.reason } });
+                logger.info(`LLM Chose provider: ${output.provider}`, 'DecisionEngine', { reason: output.reason });
                 return output;
               } else {
                 this.addLog({level: 'warn', message: `[DE] LLM chose unavailable provider "${chosenProvider}". Falling back.`, details: { available: availableProviders }});
+                logger.warn(`LLM chose unavailable provider "${chosenProvider}". Falling back.`, 'DecisionEngine', { chosenProvider, availableProviders });
               }
             } else {
               this.addLog({level: 'warn', message: '[DE] LLM provider choice response invalid format. Falling back.', details: { response: llmChoice }});
+              logger.warn('LLM provider choice response invalid format. Falling back.', 'DecisionEngine', { response: llmChoice, rawJsonResponse });
             }
           } else {
             this.addLog({level: 'warn', message: '[DE] No content from LLM for provider choice. Falling back.'});
+            logger.warn('No content from LLM for provider choice. Falling back.', 'DecisionEngine');
           }
         } catch (error: any) {
           this.addLog({level: 'error', message: '[DE] Error using LLM for provider choice. Falling back.', details: { error: error.message }});
+          logger.error('Error using LLM for provider choice. Falling back.', 'DecisionEngine', error);
         }
       }
     } else if (availableProviders.length === 0 || (availableProviders.length === 1 && availableProviders[0] === 'none')) {
         this.addLog({level: 'info', message: '[DE] No suitable search providers available (list empty or only "none").'});
+        logger.info('No suitable search providers available (list empty or only "none"). Choosing "none".', 'DecisionEngine', { availableProviders });
         return { provider: 'none', reason: 'No suitable search providers available.' };
     }
 
     this.addLog({level: 'debug', message: '[DE] Using rule-based provider choice.', details: { taskDescription: taskDescription.substring(0,100)+"..." }});
+    logger.debug(`Using rule-based provider choice for task: ${taskDescription.substring(0,100)}...`, 'DecisionEngine');
     const descriptionLower = taskDescription.toLowerCase();
     let chosenProviderByRules: SearchProviderOption = 'none';
     let reasonByRules = 'No specific provider matched by rules; default selection.';
@@ -145,6 +159,7 @@ Example Output (if Serper is available): {"provider": "serper", "reason": "The t
     }
     if (!availableProviders.includes(chosenProviderByRules) && chosenProviderByRules !== 'none') {
         this.addLog({level:'warn', message:`[DE Rule-Based] Chosen provider '${chosenProviderByRules}' is not in available list. Setting to 'none'.`, details: { availableProviders }});
+        logger.warn(`[DE Rule-Based] Chosen provider '${chosenProviderByRules}' is not in available list. Setting to 'none'.`, 'DecisionEngine', { chosenProviderByRules, availableProviders });
         chosenProviderByRules = 'none';
         reasonByRules = `Rule Error: Initial rule choice '${chosenProviderByRules}' not available. No suitable provider found.`;
     }
@@ -152,6 +167,7 @@ Example Output (if Serper is available): {"provider": "serper", "reason": "The t
         const firstValidProvider = availableProviders.find(p => p !== 'none');
         if (firstValidProvider) {
             this.addLog({level:'warn', message:`[DE Rule-Based] Rules resulted in 'none', but valid providers exist. Defaulting to "none" as per conservative fallback.`});
+            logger.warn(`[DE Rule-Based] Rules resulted in 'none', but valid providers exist. Defaulting to "none" as per conservative fallback.`, 'DecisionEngine', { availableProviders });
             reasonByRules = "Rule Default: No specific rule matched, and default selection process also resulted in 'none'.";
         } else {
              reasonByRules = "Rule Default: No providers available or only 'none' is available.";
@@ -176,24 +192,32 @@ Example Output (if Serper is available): {"provider": "serper", "reason": "The t
         message: `[DE] Handling failure for task ${task.id}. Initial error: ${effectiveErrorMessage.substring(0,100)}...`,
         details: { taskId: task.id, error: originalErrorForPrompt, validationOutcome, retries: task.retries }
     });
+    logger.warn(`Handling failure for task ${task.id}. Retries: ${task.retries}.`, 'DecisionEngine', { taskId: task.id, error: originalErrorForPrompt, errorString: effectiveErrorMessage, validationOutcome, retries: task.retries });
 
     if (task.status === 'completed' && validationOutcome && !validationOutcome.isValid) {
       effectiveErrorMessage = `Validation failed: ${validationOutcome.critique || 'No critique provided.'}`.toLowerCase();
       isValidationFailure = true;
       this.addLog({level: 'debug', message: `[DE] Task ${task.id} confirmed as validation failure. Critique: ${validationOutcome.critique}`});
+      logger.debug(`Task ${task.id} confirmed as validation failure.`, 'DecisionEngine', { critique: validationOutcome.critique });
     } else if (error) {
       this.addLog({level: 'debug', message: `[DE] Task ${task.id} confirmed as execution error: ${effectiveErrorMessage.substring(0,100)}...`});
+      logger.debug(`Task ${task.id} confirmed as execution error.`, 'DecisionEngine', { error: effectiveErrorMessage.substring(0,100)+"..." });
     } else if (validationOutcome && !validationOutcome.isValid) {
+      // This case might occur if the task status is not 'completed' but validation still happened (e.g. failed during execution, then validated)
       effectiveErrorMessage = `Validation failed: ${validationOutcome.critique || 'No critique provided.'}`.toLowerCase();
       isValidationFailure = true;
       this.addLog({level: 'debug', message: `[DE] Task ${task.id} (status: ${task.status}) confirmed as validation failure. Critique: ${validationOutcome.critique}`});
+      logger.debug(`Task ${task.id} (status: ${task.status}) confirmed as validation failure.`, 'DecisionEngine', { critique: validationOutcome.critique });
     } else {
+        // This is an unusual state: handleFailedTask was called but there's no error object and no validation failure.
         this.addLog({level: 'error', message: `[DE] handleFailedTask for ${task.id}: No primary error and no validation failure. Unusual. Defaulting to abandon.`});
+        logger.error(`handleFailedTask for ${task.id}: No primary error and no validation failure. Unusual. Defaulting to abandon.`, 'DecisionEngine', { task });
         return { action: 'abandon', reason: 'Task failure unclear (no primary error or validation critique).', delayMs: undefined };
     }
 
     if (this.useLLMForDecisions && this.geminiClient) {
       this.addLog({level: 'debug', message: `[DE] Attempting LLM for failure handling task ${task.id}. Type: ${isValidationFailure ? 'ValidationFailure' : 'ExecutionError'}`});
+      logger.debug(`Attempting LLM for failure handling task ${task.id}. Type: ${isValidationFailure ? 'ValidationFailure' : 'ExecutionError'}`, 'DecisionEngine');
       const availableActions: FailedTaskAction[] = ['retry', 'abandon', 're-plan', 'escalate'];
       const actionsString = availableActions.join("', '");
       let failureHistoryContext = "";
@@ -235,23 +259,39 @@ ${failureHistoryContext}`;
                 if (task.retries >= DecisionEngine.MAX_TASK_RETRIES) {
                     const overrideReason = `LLM suggested retry, but max retries (${task.retries}/${DecisionEngine.MAX_TASK_RETRIES}) reached. Overriding to 'abandon'. LLM Reason: ${llmChoice.reason}`;
                     this.addLog({level: 'warn', message: `[DE] LLM retry override for task ${task.id}`, details: { originalReason: llmChoice.reason, overrideReason }});
+                    logger.warn(`LLM retry override for task ${task.id}. LLM suggested retry, but max retries reached.`, 'DecisionEngine', { taskId: task.id, llmReason: llmChoice.reason, retries: task.retries });
                     return { action: 'abandon', reason: overrideReason, delayMs: undefined };
                 }
                 if (typeof delay !== 'number' || delay <= 0) {
                   const defaultDelay = 1000 * Math.pow(2, task.retries);
                   this.addLog({level: 'warn', message: `[DE] LLM retry for task ${task.id} had invalid delayMs (${delay}). Defaulting.`, details: { defaultDelay }});
+                  logger.warn(`LLM retry for task ${task.id} had invalid delayMs (${delay}). Defaulting.`, 'DecisionEngine', { taskId: task.id, suggestedDelay: delay, defaultDelay });
                   delay = defaultDelay;
                 }
               } else { delay = undefined; }
               this.addLog({level: 'info', message: `[DE] LLM decision for task ${task.id} failure: ${action}. Reason: ${llmChoice.reason}`});
+              logger.info(`LLM decision for task ${task.id} failure: ${action}.`, 'DecisionEngine', { taskId: task.id, reason: llmChoice.reason, delayMs: delay });
               return { action, reason: `LLM Decision: ${llmChoice.reason}`, delayMs: delay };
-            } else { this.addLog({level: 'warn', message: `[DE] LLM chose invalid action "${action}" for task ${task.id}. Falling back to rules.`}); }
-          } else { this.addLog({level: 'warn', message: `[DE] LLM response for task ${task.id} failure not in expected format. Falling back.`, details: {response: llmChoice}}); }
-        } else { this.addLog({level: 'warn', message: `[DE] No content from LLM for task ${task.id} failure. Falling back.`}); }
-      } catch (llmError: any) { this.addLog({level: 'error', message: `[DE] Error using LLM for task ${task.id} failure. Falling back.`, details: {error: llmError.message}}); }
+            } else {
+              this.addLog({level: 'warn', message: `[DE] LLM chose invalid action "${action}" for task ${task.id}. Falling back to rules.`});
+              logger.warn(`LLM chose invalid action "${action}" for task ${task.id}. Falling back to rules.`, 'DecisionEngine', { taskId: task.id, chosenAction: action, llmResponse: rawJsonResponse });
+            }
+          } else {
+            this.addLog({level: 'warn', message: `[DE] LLM response for task ${task.id} failure not in expected format. Falling back.`, details: {response: llmChoice}});
+            logger.warn(`LLM response for task ${task.id} failure not in expected format. Falling back.`, 'DecisionEngine', { taskId: task.id, response: llmChoice, rawJsonResponse });
+          }
+        } else {
+          this.addLog({level: 'warn', message: `[DE] No content from LLM for task ${task.id} failure. Falling back.`});
+          logger.warn(`No content from LLM for task ${task.id} failure. Falling back.`, 'DecisionEngine', { taskId: task.id });
+        }
+      } catch (llmError: any) {
+        this.addLog({level: 'error', message: `[DE] Error using LLM for task ${task.id} failure. Falling back.`, details: {error: llmError.message}});
+        logger.error(`Error using LLM for task ${task.id} failure. Falling back.`, 'DecisionEngine', llmError);
+      }
     }
 
     this.addLog({level: 'debug', message: `[DE] Using rule-based logic for task ${task.id} failure. IsValidationFailure: ${isValidationFailure}`});
+    logger.debug(`Using rule-based logic for task ${task.id} failure. Type: ${isValidationFailure ? 'ValidationFailure' : 'ExecutionError'}`, 'DecisionEngine');
     const currentRuleErrorMessage = effectiveErrorMessage;
     let action_rule: FailedTaskAction = 'abandon';
     let reason_rule = 'Default: Unknown error or max retries exceeded.';
@@ -272,9 +312,11 @@ ${failureHistoryContext}`;
         reason_rule = `Rule-based: Validation failed ("${validationOutcome?.critique || 'No critique.'}"), and max retries reached.`;
       }
       this.addLog({level: 'info', message: `[DE] Rule-based decision for task ${task.id} (validation failure): ${action_rule}. Reason: ${reason_rule}`});
+      logger.info(`Rule-based decision for task ${task.id} (validation failure): ${action_rule}.`, 'DecisionEngine', { taskId: task.id, reason: reason_rule, delayMs: delayMs_rule, validationOutcome });
       return { action: action_rule, reason: reason_rule, delayMs: delayMs_rule };
     }
 
+    // Rule-based logic for execution errors
     if (currentRuleErrorMessage.includes('network error') || currentRuleErrorMessage.includes('socket hang up') || currentRuleErrorMessage.includes('timeout') || currentRuleErrorMessage.includes('etimedout') || currentRuleErrorMessage.includes('econnreset') || currentRuleErrorMessage.includes('service unavailable') || currentRuleErrorMessage.includes('rate limit exceeded') || currentRuleErrorMessage.includes('tavily api rate limit exceeded') || currentRuleErrorMessage.includes('gemini sdk error: 429') || (errorStatusCode === 429 || errorStatusCode === 503 || errorStatusCode === 504)) {
       if (task.retries < DecisionEngine.MAX_TASK_RETRIES) {
         action_rule = 'retry'; delayMs_rule = 1000 * Math.pow(2, task.retries);
@@ -288,11 +330,12 @@ ${failureHistoryContext}`;
       action_rule = 'abandon'; reason_rule = `Rule-based: Content safety restriction ("${currentRuleErrorMessage}"). Suggesting abandon.`;
     } else if (task.retries >= DecisionEngine.MAX_TASK_RETRIES) {
       action_rule = 'abandon'; reason_rule = `Rule-based: Max retries (${DecisionEngine.MAX_TASK_RETRIES}) reached with unclassified error: "${currentRuleErrorMessage}"`;
-    } else if (task.retries < DecisionEngine.MAX_TASK_RETRIES) {
+    } else if (task.retries < DecisionEngine.MAX_TASK_RETRIES) { // Default to retry if retries are left for unclassified errors
       action_rule = 'retry'; delayMs_rule = 1000 * Math.pow(2, task.retries);
       reason_rule = `Rule-based: Unclassified error ("${currentRuleErrorMessage}"), retries remaining. Suggesting retry #${task.retries + 1} after ${delayMs_rule/1000}s.`;
     }
     this.addLog({level: 'info', message: `[DE] Rule-based decision for task ${task.id} failure: ${action_rule}. Reason: ${reason_rule}`});
+    logger.info(`Rule-based decision for task ${task.id} (execution error): ${action_rule}.`, 'DecisionEngine', { taskId: task.id, reason: reason_rule, delayMs: delayMs_rule, error: currentRuleErrorMessage, retries: task.retries });
     return { action: action_rule, reason: reason_rule, delayMs: delayMs_rule };
   }
 
