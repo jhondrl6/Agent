@@ -1,23 +1,111 @@
 import { GoogleGenerativeAI, GenerativeModel, GenerationConfig, HarmCategory, HarmBlockThreshold, Content } from "@google/generative-ai";
+import { LRUCache } from 'lru-cache';
 import { GeminiRequestParams, GeminiResponse } from '@/lib/types/search';
 
 // Default model to use if not specified in params
 const DEFAULT_MODEL_NAME = "gemini-pro";
 
+// Default Cache Configuration
+const DEFAULT_CACHE_TTL_MS = process.env.GEMINI_CACHE_TTL_MS ? parseInt(process.env.GEMINI_CACHE_TTL_MS, 10) : 1000 * 60 * 60; // 1 hour
+const DEFAULT_CACHE_MAX_SIZE = process.env.GEMINI_CACHE_MAX_SIZE ? parseInt(process.env.GEMINI_CACHE_MAX_SIZE, 10) : 100;
+
+export interface GeminiCacheOptions {
+  ttl?: number; // Time in milliseconds
+  maxSize?: number;
+}
 export class GeminiClient {
   private genAI: GoogleGenerativeAI;
+  private cache: LRUCache<string, GeminiResponse>;
+  private cacheEnabled: boolean;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, cacheOptions?: GeminiCacheOptions) {
     if (!apiKey) {
       throw new Error('Gemini API key is required.');
     }
     this.genAI = new GoogleGenerativeAI(apiKey);
     console.log('[GeminiClient] Initialized with GoogleGenerativeAI SDK.');
+
+    const ttl = cacheOptions?.ttl ?? DEFAULT_CACHE_TTL_MS;
+    const maxSize = cacheOptions?.maxSize ?? DEFAULT_CACHE_MAX_SIZE;
+    this.cacheEnabled = maxSize > 0 && ttl > 0;
+
+    if (this.cacheEnabled) {
+      this.cache = new LRUCache<string, GeminiResponse>({
+        max: maxSize,
+        ttl: ttl,
+      });
+      console.log(`[GeminiClient] Response cache enabled with maxSize=${maxSize}, ttl=${ttl}ms.`);
+    } else {
+      console.log('[GeminiClient] Response cache is disabled.');
+      // Provide a dummy cache that does nothing if caching is disabled
+      this.cache = {
+        get: () => undefined,
+        set: () => false,
+        delete: () => false,
+        clear: () => {},
+        has: () => false,
+        dump: () => [],
+        load: () => {},
+        size: 0,
+        maxSize: 0,
+        ttl: 0,
+        reset: () => {},
+        keys: () => new Set<string>().values(),
+        values: () => new Set<GeminiResponse>().values(),
+        rkeys: () => new Set<string>().values(),
+        rvalues: () => new Set<GeminiResponse>().values(),
+        // Add any other methods from LRUCache if needed for type compatibility
+      } as any as LRUCache<string, GeminiResponse>; // Type assertion for disabled cache
+    }
+  }
+
+  private generateCacheKey(params: GeminiRequestParams): string {
+    const keyParts: Record<string, any> = {
+      prompt: params.prompt,
+      model: params.model || DEFAULT_MODEL_NAME,
+      temperature: params.temperature,
+      maxOutputTokens: params.maxOutputTokens,
+      // Only include topK and topP if they are explicitly provided,
+      // as their default values might not be consistent or known here.
+    };
+    if (params.topK !== undefined) keyParts.topK = params.topK;
+    if (params.topP !== undefined) keyParts.topP = params.topP;
+
+    // Sort keys for a stable JSON string
+    const sortedKeys = Object.keys(keyParts).sort();
+    const sortedKeyParts: Record<string, any> = {};
+    for (const key of sortedKeys) {
+      sortedKeyParts[key] = keyParts[key];
+    }
+    return JSON.stringify(sortedKeyParts);
   }
 
   async generate(params: GeminiRequestParams): Promise<GeminiResponse> {
-    console.log('[GeminiClient] Generating content for prompt:', params.prompt);
+    if (!this.cacheEnabled) {
+      console.log('[GeminiClient] Cache disabled, proceeding with API call for prompt:', params.prompt);
+      return this.directGenerate(params);
+    }
 
+    const cacheKey = this.generateCacheKey(params);
+    const cachedResponse = this.cache.get(cacheKey);
+
+    if (cachedResponse) {
+      console.log('[GeminiClient] Cache hit for key:', cacheKey);
+      // Return a deep copy to prevent modification of cached object by callers
+      return JSON.parse(JSON.stringify(cachedResponse));
+    }
+
+    console.log('[GeminiClient] Cache miss for key:', cacheKey, '. Generating content for prompt:', params.prompt);
+    const response = await this.directGenerate(params);
+
+    if (response) { // Only cache successful responses
+        this.cache.set(cacheKey, JSON.parse(JSON.stringify(response))); // Store a deep copy
+        console.log('[GeminiClient] Response cached for key:', cacheKey);
+    }
+    return response;
+  }
+
+  private async directGenerate(params: GeminiRequestParams): Promise<GeminiResponse> {
     try {
       const modelName = params.model || DEFAULT_MODEL_NAME;
       const model: GenerativeModel = this.genAI.getGenerativeModel({ model: modelName });

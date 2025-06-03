@@ -1,20 +1,92 @@
 // src/lib/search/TavilyClient.ts
 import Tavily from 'tavily'; // The Tavily SDK
+import { LRUCache } from 'lru-cache';
 import { TavilySearchParams, TavilySearchResponse, TavilySearchResultItem } from '@/lib/types/search';
 
+// Default Cache Configuration
+const DEFAULT_TAVILY_CACHE_TTL_MS = process.env.TAVILY_CACHE_TTL_MS ? parseInt(process.env.TAVILY_CACHE_TTL_MS, 10) : 1000 * 60 * 30; // 30 minutes
+const DEFAULT_TAVILY_CACHE_MAX_SIZE = process.env.TAVILY_CACHE_MAX_SIZE ? parseInt(process.env.TAVILY_CACHE_MAX_SIZE, 10) : 50;
+
+export interface TavilyCacheOptions {
+  ttl?: number; // Time in milliseconds
+  maxSize?: number;
+}
+
+// Helper for deep cloning cache objects
+function deepClone<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+  return JSON.parse(JSON.stringify(obj));
+}
 export class TavilyClient {
   private client: Tavily;
+  private cache: LRUCache<string, TavilySearchResponse>;
+  private cacheEnabled: boolean;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, cacheOptions?: TavilyCacheOptions) {
     if (!apiKey) {
       throw new Error('Tavily API key is required.');
     }
     this.client = new Tavily(apiKey);
     console.log('[TavilyClient] Initialized with Tavily SDK.');
+
+    const ttl = cacheOptions?.ttl ?? DEFAULT_TAVILY_CACHE_TTL_MS;
+    const maxSize = cacheOptions?.maxSize ?? DEFAULT_TAVILY_CACHE_MAX_SIZE;
+    this.cacheEnabled = maxSize > 0 && ttl > 0;
+
+    if (this.cacheEnabled) {
+      this.cache = new LRUCache<string, TavilySearchResponse>({
+        max: maxSize,
+        ttl: ttl,
+      });
+      console.log(`[TavilyClient] Response cache enabled with maxSize=${maxSize}, ttl=${ttl}ms.`);
+    } else {
+      console.log('[TavilyClient] Response cache is disabled.');
+      this.cache = { get: () => undefined, set: () => false } as any as LRUCache<string, TavilySearchResponse>; // Simplified dummy for disabled state
+    }
+  }
+
+  private generateCacheKey(params: TavilySearchParams): string {
+    const { query, ...options } = params;
+    const keyParts: Record<string, any> = { query };
+
+    // Add other relevant options, sorting them for consistency
+    const sortedOptionKeys = Object.keys(options).sort();
+    for (const key of sortedOptionKeys) {
+      if ((options as any)[key] !== undefined) {
+        keyParts[key] = (options as any)[key];
+      }
+    }
+    return JSON.stringify(keyParts);
   }
 
   async search(params: TavilySearchParams): Promise<TavilySearchResponse> {
-    console.log('[TavilyClient] Performing search with query:', params.query);
+    if (!this.cacheEnabled) {
+      // console.log('[TavilyClient] Cache disabled, proceeding with direct search for query:', params.query);
+      return this.directSearch(params);
+    }
+
+    const cacheKey = this.generateCacheKey(params);
+    const cachedResponse = this.cache.get(cacheKey);
+
+    if (cachedResponse) {
+      console.log('[TavilyClient] Cache hit for key:', cacheKey);
+      return deepClone(cachedResponse);
+    }
+
+    console.log('[TavilyClient] Cache miss for key:', cacheKey, '. Performing search with query:', params.query);
+    const response = await this.directSearch(params);
+
+    if (response) { // Only cache successful-looking responses
+      this.cache.set(cacheKey, deepClone(response));
+      console.log('[TavilyClient] Response cached for key:', cacheKey);
+    }
+    return response;
+  }
+
+  private async directSearch(params: TavilySearchParams): Promise<TavilySearchResponse> {
+    // console.log('[TavilyClient] Direct search with query:', params.query); // Logging now done by public search or cache miss message
     try {
       // Map our TavilySearchParams to the options expected by tavily-js SDK
       // The SDK's search method takes (query: string, options?: SearchOptions)

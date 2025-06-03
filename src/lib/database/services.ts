@@ -70,6 +70,26 @@ export async function deleteMission(missionId: string): Promise<Mission | null> 
   });
 }
 
+export async function getMissionsByStatus(status: string): Promise<Mission[]> {
+  const missions = await prisma.mission.findMany({
+    where: { status: status },
+    include: { tasks: true }, // Include tasks, consistent with getMissionById
+  });
+
+  // Post-process tasks to parse JSON fields, similar to getMissionById
+  return missions.map(mission => {
+    if (mission.tasks) {
+      mission.tasks = mission.tasks.map(task => ({
+        ...task,
+        result: task.result && isValidJson(task.result) ? JSON.parse(task.result) : task.result,
+        failureDetails: task.failureDetails && isValidJson(task.failureDetails) ? JSON.parse(task.failureDetails) : task.failureDetails,
+        validationOutcome: task.validationOutcome && isValidJson(task.validationOutcome) ? JSON.parse(task.validationOutcome) : task.validationOutcome,
+      }));
+    }
+    return mission;
+  });
+}
+
 // Task Services
 export async function createTask(taskData: {
   missionId: string;
