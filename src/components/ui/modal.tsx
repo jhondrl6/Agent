@@ -51,10 +51,12 @@ const ModalComponent = ({ isOpen, onClose, title, children, size = 'md' }: Modal
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? 'modal-title' : undefined}
+      data-testid="modal-overlay" // Added for testing
     >
       <div
         className={`bg-white text-gray-800 p-5 sm:p-6 rounded-lg shadow-xl w-full ${sizeClasses[size]} max-h-[90vh] flex flex-col transform transition-all duration-150 ease-in-out scale-95 opacity-0 animate-modalFadeIn`}
         onClick={(e) => e.stopPropagation()}
+        data-testid="modal-panel" // Added for testing
       >
         <div className="flex justify-between items-center border-b border-gray-200 pb-3 mb-4">
           {title && <h3 id="modal-title" className="text-xl font-semibold text-gray-900">{title}</h3>}
