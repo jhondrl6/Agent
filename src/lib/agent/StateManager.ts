@@ -21,6 +21,8 @@ interface StoreActions {
   addTaskToActive: (taskId: string) => void;
   removeTaskFromActive: (taskId: string) => void;
   addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
+  manualCompleteTask: (missionId: string, taskId: string, manualResultText?: string) => void;
+  manualFailTask: (missionId: string, taskId: string, manualReason: string) => void;
   // Potentially add more actions as needed
 }
 
