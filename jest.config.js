@@ -19,7 +19,7 @@ const customJestConfig = {
   },
   transform: {
     // Use ts-jest for .ts/.tsx files
-    '^.+\\.(ts|tsx)$': ['ts-jest', { 
+    '^.+\\.(ts|tsx)$': ['ts-jest', {
         tsconfig: '<rootDir>/tsconfig.jest.json' // Separate tsconfig for Jest if needed, or use default
     }]
   },

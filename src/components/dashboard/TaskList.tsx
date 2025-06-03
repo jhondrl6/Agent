@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useAgentStore } from '@/lib/agent/StateManager';
 import { Mission, Task, LogLevel } from '@/lib/types/agent';
 import { TaskExecutor } from '@/lib/agent/TaskExecutor';
-import { Modal } from '@/components/ui/modal'; 
+import { Modal } from '@/components/ui/modal';
 import { DecisionEngine } from '@/lib/agent/DecisionEngine'; // For MAX_TASK_RETRIES
 import { TaskListItem } from './TaskListItem'; // Import TaskListItem
 // getStatusPillClasses will be used by the Modal section in this file.
@@ -16,7 +16,7 @@ import { getStatusPillClasses } from './utils';
 
 export function TaskList() {
   const currentMissionId = useAgentStore((state) => state.agentState.currentMissionId);
-  const mission = useAgentStore((state) => 
+  const mission = useAgentStore((state) =>
     state.agentState.currentMissionId ? state.missions[state.agentState.currentMissionId] : null
   );
   const agentIsGloballyLoading = useAgentStore((state) => state.agentState.isLoading);
@@ -38,7 +38,7 @@ export function TaskList() {
   const handleManualComplete = () => {
     if (!selectedTask || !mission) return;
     const manualResultText = prompt("Optional: Enter a brief result or reason for manual completion:", "Manually completed via UI.");
-    if (manualResultText === null) return; 
+    if (manualResultText === null) return;
 
     manualCompleteTask(mission.id, selectedTask.id, manualResultText || "Manually completed via UI.");
     addLog({ level: 'system', message: `[UI] Task ${selectedTask.id} manually marked COMPLETED.`, details: { missionId: mission.id, taskId: selectedTask.id, manualResult: manualResultText } });
@@ -48,7 +48,7 @@ export function TaskList() {
   const handleManualFail = () => {
     if (!selectedTask || !mission) return;
     const manualFailureReason = prompt("Enter a reason for manually failing this task:", "Manually failed via UI.");
-    if (manualFailureReason === null) return; 
+    if (manualFailureReason === null) return;
 
     manualFailTask(mission.id, selectedTask.id, manualFailureReason || "Manually failed via UI.");
     addLog({ level: 'system', message: `[UI] Task ${selectedTask.id} manually marked FAILED.`, details: { missionId: mission.id, taskId: selectedTask.id, reason: manualFailureReason } });
@@ -58,16 +58,16 @@ export function TaskList() {
   const handleForceRetry = async () => {
     if (!selectedTask || !mission) return;
     addLog({ level: 'system', message: `[UI] Force retry triggered for task ${selectedTask.id}.`, details: { missionId: mission.id, taskId: selectedTask.id } });
-    const executor = new TaskExecutor(addLog); 
+    const executor = new TaskExecutor(addLog);
     const taskToRetry: Task = {
       ...selectedTask, status: 'pending', result: undefined, failureDetails: undefined,
-      validationOutcome: undefined, updatedAt: new Date(), 
+      validationOutcome: undefined, updatedAt: new Date(),
     };
-    updateTask(mission.id, selectedTask.id, { 
-      status: 'pending', retries: taskToRetry.retries, result: undefined, 
-      failureDetails: undefined, validationOutcome: undefined, updatedAt: new Date() 
+    updateTask(mission.id, selectedTask.id, {
+      status: 'pending', retries: taskToRetry.retries, result: undefined,
+      failureDetails: undefined, validationOutcome: undefined, updatedAt: new Date()
     });
-    closeModal(); 
+    closeModal();
     try {
       executor.executeTask(mission.id, taskToRetry)
         .then(() => { addLog({ level: 'info', message: `[UI] Forced retry for task ${taskToRetry.id} initiated and has run its course.` }); })
@@ -82,28 +82,28 @@ export function TaskList() {
       alert("No pending tasks to run."); return;
     }
     addLog({ level: 'system', message: `[UI] Triggering execution for ${pendingTasks.length} pending tasks for mission ${mission.id}.`});
-    const executor = new TaskExecutor(addLog); 
-    const taskPromises = pendingTasks.map(task => 
+    const executor = new TaskExecutor(addLog);
+    const taskPromises = pendingTasks.map(task =>
       executor.executeTask(mission.id, task)
-        .catch(err => { 
+        .catch(err => {
           console.error(`[TaskList] Critical error from executeTask promise for ${task.id}:`, err);
           addLog({level: 'error', message: `[TaskList] Critical error from executeTask promise for ${task.id}`, details: { error: (err as Error).message }});
-          return { status: 'rejected', reason: err, taskId: task.id }; 
+          return { status: 'rejected', reason: err, taskId: task.id };
         })
     );
     try {
       const results = await Promise.allSettled(taskPromises);
       addLog({level: 'debug', message: `[TaskList] All triggered task promises for mission ${mission.id} have settled.`, details: {resultsCount: results.length}});
       results.forEach((result, index) => {
-        const task = pendingTasks[index]; 
-        if (result.status === 'fulfilled') { /* Logged by TaskExecutor */ } 
+        const task = pendingTasks[index];
+        if (result.status === 'fulfilled') { /* Logged by TaskExecutor */ }
         else { addLog({level: 'error', message:`[TaskList] Task ${task.id} promise was rejected:`, details: {reason: result.reason}}); }
       });
     } catch (error: any) {
       addLog({level: 'error', message:"[TaskList] Error during Promise.allSettled execution:", details: {error: error.message}});
     }
   };
-  
+
   // getStatusPillClasses is kept here because the Modal section below uses it.
   // TaskListItem imports its own copy from utils.ts.
   // This could be refactored so Modal also imports from utils.ts or gets classes as props.
@@ -116,7 +116,7 @@ export function TaskList() {
       </div>
     );
   }
-  
+
   const hasPendingTasks = mission.tasks && mission.tasks.some(t => t.status === 'pending');
 
   return (
@@ -129,11 +129,11 @@ export function TaskList() {
         </div>
         <button
           onClick={handleExecutePendingTasks}
-          disabled={agentIsGloballyLoading || !hasPendingTasks} 
+          disabled={agentIsGloballyLoading || !hasPendingTasks}
           className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center transition-colors duration-150 ease-in-out mt-3 sm:mt-0 w-full sm:w-auto"
           title={!hasPendingTasks ? "No pending tasks available" : agentIsGloballyLoading ? "Tasks are currently executing" : "Run all pending tasks"}
         >
-          {agentIsGloballyLoading && activeTasksGlobalCount > 0 && ( 
+          {agentIsGloballyLoading && activeTasksGlobalCount > 0 && (
             <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
           )}
           {agentIsGloballyLoading && activeTasksGlobalCount > 0 ? `Executing (${activeTasksGlobalCount} Active)...` : 'Run All Pending Tasks'}
@@ -142,7 +142,7 @@ export function TaskList() {
 
       {!mission.tasks || mission.tasks.length === 0 ? (
          <p className="text-gray-600">
-         {mission.status === 'pending' && mission.tasks.length === 0 
+         {mission.status === 'pending' && mission.tasks.length === 0
            ? "Tasks are being decomposed..."
            : "No tasks have been generated for this mission yet, or decomposition is complete with no tasks."}
        </p>
@@ -221,13 +221,13 @@ export function TaskList() {
             </button>
             <button
               onClick={handleForceRetry}
-              disabled={selectedTask.status === 'in-progress' || selectedTask.status === 'retrying'} 
+              disabled={selectedTask.status === 'in-progress' || selectedTask.status === 'retrying'}
               className="px-4 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400 disabled:text-gray-700 disabled:cursor-not-allowed"
             >
               Force Retry
             </button>
-            <button 
-              onClick={closeModal} 
+            <button
+              onClick={closeModal}
               className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
             >
               Close

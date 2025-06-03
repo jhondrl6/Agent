@@ -1,7 +1,7 @@
 // src/lib/agent/TaskDecomposer.test.ts
-import { TaskDecomposer } from './TaskDecomposer'; 
-import { Mission, Task, LogLevel } from '@/lib/types/agent'; 
-import { GeminiClient } from '@/lib/search/GeminiClient'; 
+import { TaskDecomposer } from './TaskDecomposer';
+import { Mission, Task, LogLevel } from '@/lib/types/agent';
+import { GeminiClient } from '@/lib/search/GeminiClient';
 
 // Mock GeminiClient
 // jest.mock('@/lib/search/GeminiClient'); // Auto-mocks all methods - this path might be tricky with class constructor
@@ -70,7 +70,7 @@ describe('TaskDecomposer', () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0].description).toBe('Cleaned task');
   });
-  
+
   it('should handle LLM response with only ``` prefix', async () => {
     const mockLLMResponse = {
       candidates: [{ content: { parts: [{ text: '```\n[{"description": "Cleaned task"}]\n' }] } }],
@@ -104,7 +104,7 @@ describe('TaskDecomposer', () => {
     expect(tasks[0].description).toContain('Fallback: Could not decompose mission');
     expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'error', message: expect.stringContaining(`No content from Gemini API or unexpected response structure for mission ${mockMission.id}`) }));
   });
-  
+
   it('should return a fallback task if LLM response is not an array of descriptions', async () => {
     const mockLLMResponse = {
       candidates: [{ content: { parts: [{ text: '{"description": "Not an array"}' }] } }], // Object, not array
@@ -126,7 +126,7 @@ describe('TaskDecomposer', () => {
     expect(tasks[0].description).toContain('Fallback: Could not decompose mission');
     expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'error', message: expect.stringContaining(`[TD] Error decomposing mission ${mockMission.id}: LLM API Error`) }));
   });
-  
+
   it('should log prompt and response summaries with debug level', async () => {
     const mockLLMResponse = {
       candidates: [{ content: { parts: [{ text: '[{"description": "Debug task"}]' }] } }],

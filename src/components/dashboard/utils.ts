@@ -37,10 +37,10 @@ export const getLogLevelTailwindClasses = (level: LogLevel): { text: string; bor
 
 export const formatLogTimestamp = (timestamp: Date): string => {
   const dateObject = timestamp instanceof Date ? timestamp : new Date(timestamp);
-  return dateObject.toLocaleTimeString([], { 
-    hour: '2-digit', 
-    minute: '2-digit', 
-    second: '2-digit', 
-    fractionalSecondDigits: 3 
+  return dateObject.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    fractionalSecondDigits: 3
   });
 };

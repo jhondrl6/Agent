@@ -8,15 +8,15 @@ import { Mission, Task } from '@/lib/types/agent'; // Make sure Task is imported
 // Placeholder Button and Input components
 // TODO: Replace these with actual components from src/components/ui/ when they are implemented
 const Input = (props: React.InputHTMLAttributes<HTMLInputElement>) => (
-  <input 
-    {...props} 
-    className={`border p-2 rounded mr-0 sm:mr-2 mb-2 sm:mb-0 flex-grow w-full sm:w-auto text-black focus:ring-2 focus:ring-blue-500 outline-none ${props.disabled ? 'bg-gray-300 cursor-not-allowed' : 'bg-gray-100' } ${props.className || ''}`} 
+  <input
+    {...props}
+    className={`border p-2 rounded mr-0 sm:mr-2 mb-2 sm:mb-0 flex-grow w-full sm:w-auto text-black focus:ring-2 focus:ring-blue-500 outline-none ${props.disabled ? 'bg-gray-300 cursor-not-allowed' : 'bg-gray-100' } ${props.className || ''}`}
   />
 );
 
 const Button = (props: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
-  <button 
-    {...props} 
+  <button
+    {...props}
     className={`bg-blue-600 hover:bg-blue-700 text-white font-semibold p-2 rounded disabled:bg-gray-500 flex items-center justify-center transition-colors duration-150 ease-in-out focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 outline-none min-w-[150px] ${props.className || ''}`}
   >
     {props.disabled && (
@@ -35,7 +35,7 @@ export function MissionInput() {
   const [isLoading, setIsLoading] = useState(false); // Local loading for API call
   const [error, setError] = useState<string | null>(null); // Local error for API call
   const [lastCreatedId, setLastCreatedId] = useState<string | null>(null);
-  
+
   // Access store state if needed, e.g., to display global errors or loading state
   const agentErrorGlobal = useAgentStore((state) => state.agentState.error);
   const globalIsLoading = useAgentStore((state) => state.agentState.isLoading); // Example of accessing global loading
@@ -66,25 +66,25 @@ export function MissionInput() {
         const errorDetails = (data as { error: string; details?: string }).details;
         throw new Error(errorDetails ? `${errorMsg}: ${errorDetails}` : errorMsg);
       }
-      
+
       // API call was successful, mission is now in the store via the API route
       // The API route itself calls createMission on the store.
       // The client-side store will not automatically update unless we implement a mechanism for it (e.g., re-fetching, websockets, or manual update).
       // For now, we just log it and show a success message with ID.
       console.log('Mission creation request successful:', data);
-      setLastCreatedId((data as Mission).id); 
-      setMissionGoal(''); 
+      setLastCreatedId((data as Mission).id);
+      setMissionGoal('');
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       console.error('Error creating mission:', errorMessage);
       setError(errorMessage);
       // Optionally, update global agent error state if appropriate
-      // useAgentStore.getState().setAgentError(errorMessage); 
+      // useAgentStore.getState().setAgentError(errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
-  
+
   // Optional: Display global agent error from the store
   useEffect(() => {
     if (agentErrorGlobal) {

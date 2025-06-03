@@ -11,8 +11,8 @@ const ProgressBar = ({ value, max = 100 }: { value: number; max?: number }) => {
   const percentage = max > 0 ? (value / max) * 100 : 0;
   return (
     <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden border border-gray-300">
-      <div 
-        className="bg-green-500 h-full rounded-full transition-all duration-300 ease-in-out flex items-center justify-center" 
+      <div
+        className="bg-green-500 h-full rounded-full transition-all duration-300 ease-in-out flex items-center justify-center"
         style={{ width: `${percentage}%` }}
       >
         {percentage > 10 && <span className="text-xs font-medium text-white">{percentage.toFixed(0)}%</span>}
@@ -23,7 +23,7 @@ const ProgressBar = ({ value, max = 100 }: { value: number; max?: number }) => {
 
 
 export function ProgressMonitor() {
-  const mission = useAgentStore((state) => 
+  const mission = useAgentStore((state) =>
     state.agentState.currentMissionId ? state.missions[state.agentState.currentMissionId] : null
   );
   const agentState = useAgentStore((state) => state.agentState);
@@ -51,7 +51,7 @@ export function ProgressMonitor() {
   return (
     <div className="p-6 my-4 bg-white border border-gray-200 rounded-xl shadow-lg">
       <h2 className="text-xl font-semibold text-gray-800 mb-4">Agent Activity Monitor</h2>
-      
+
       {mission ? (
         <div className="mb-4">
           <h3 className="text-lg font-medium text-gray-700 mb-1 truncate" title={mission.goal}>
@@ -71,7 +71,7 @@ export function ProgressMonitor() {
               {mission.status === 'pending' ? 'Awaiting task decomposition...' : 'No tasks defined for this mission.'}
             </p>
           )}
-          
+
           {/* Active Tasks Display Enhancement */}
           <div className="mt-3">
             <h4 className="font-semibold text-gray-700">Active Tasks ({activeTasks.length}):</h4>

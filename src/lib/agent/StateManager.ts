@@ -66,7 +66,7 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
       console.warn(`[StateManager] Mission with ID ${missionId} not found for update.`);
       return state;
     }),
-  
+
   clearMissions: () => set({ missions: {} }),
 
   addTask: (missionId, task) =>
@@ -143,7 +143,7 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
       console.warn(`[StateManager] Mission (${missionId}) or its tasks not found for updating task ${taskId}.`);
       return state;
     }),
-  
+
   setAgentLoading: (isLoading) =>
     set((state) => ({ agentState: { ...state.agentState, isLoading } })),
 
@@ -159,7 +159,7 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
 
   setCurrentMissionId: (missionId) =>
     set((state) => ({ agentState: { ...state.agentState, currentMissionId: missionId } })),
-  
+
   addTaskToActive: (taskId) =>
     set((state) => {
       if (!state.agentState.activeTasks.includes(taskId)) {
@@ -172,7 +172,7 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
         };
       }
       // If task is already active, ensure isLoading reflects this (might be redundant if always set by first add)
-      return { agentState: { ...state.agentState, isLoading: true } }; 
+      return { agentState: { ...state.agentState, isLoading: true } };
     }),
 
   removeTaskFromActive: (taskId) =>

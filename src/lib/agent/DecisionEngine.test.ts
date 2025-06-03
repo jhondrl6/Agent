@@ -1,6 +1,6 @@
 // src/lib/agent/DecisionEngine.test.ts
 import { DecisionEngine, ChooseSearchProviderInput, HandleFailedTaskInput, SearchProviderOption, FailedTaskAction } from './DecisionEngine';
-import { Task, LogLevel, ValidationOutput } from '@/lib/types/agent'; 
+import { Task, LogLevel, ValidationOutput } from '@/lib/types/agent';
 // GeminiClient might not be needed if we only test rule-based path by not providing API key.
 
 // Mock addLog function
@@ -27,7 +27,7 @@ describe('DecisionEngine (Rule-Based Logic)', () => {
   beforeEach(() => {
     // Instantiate DecisionEngine without a Gemini API key to force rule-based mode
     // Constructor: constructor(addLogFunction, geminiApiKey?)
-    decisionEngineRuleBased = new DecisionEngine(mockAddLog, undefined); 
+    decisionEngineRuleBased = new DecisionEngine(mockAddLog, undefined);
     mockAddLog.mockClear();
     mockTask = {...mockTaskDefault}; // Reset task to default for each test
   });
@@ -64,16 +64,16 @@ describe('DecisionEngine (Rule-Based Logic)', () => {
       expect(output.provider).toBe('tavily');
       expect(output.reason).toContain('Rule: General research query or Tavily specified');
     });
-    
+
     it('should use default fallback (tavily -> serper -> gemini -> first available) if no specific rules match', async () => {
         const inputSerperNext: ChooseSearchProviderInput = { taskDescription: "what is the weather?", availableProviders: ['serper', 'gemini'] };
         const outputSerperNext = await decisionEngineRuleBased.chooseSearchProvider(inputSerperNext);
-        expect(outputSerperNext.provider).toBe('serper'); 
+        expect(outputSerperNext.provider).toBe('serper');
         expect(outputSerperNext.reason).toContain('Rule Default: Tavily not available, Serper selected.');
-        
+
         const inputGeminiNext: ChooseSearchProviderInput = { taskDescription: "what is the weather?", availableProviders: ['gemini'] };
         const outputGeminiNext = await decisionEngineRuleBased.chooseSearchProvider(inputGeminiNext);
-        expect(outputGeminiNext.provider).toBe('gemini'); 
+        expect(outputGeminiNext.provider).toBe('gemini');
         expect(outputGeminiNext.reason).toContain('Rule Default: Only Gemini available');
 
         const inputTavilyFirst: ChooseSearchProviderInput = { taskDescription: "tell me a joke", availableProviders };
@@ -130,7 +130,7 @@ describe('DecisionEngine (Rule-Based Logic)', () => {
       expect(output.action).toBe('abandon');
       expect(output.reason).toContain('Rule-based: Configuration error detected');
     });
-    
+
     it('should suggest abandon for bad request errors (e.g., 400)', async () => {
       const input: HandleFailedTaskInput = {
         task: { ...mockTask, retries: 0 },

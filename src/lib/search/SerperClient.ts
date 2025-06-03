@@ -59,7 +59,7 @@ export class SerperClient {
         knowledgeGraph: data.knowledgeGraph,
         // Map other top-level fields like videos, images, etc. if present and needed
       };
-      
+
       return adaptedResponse;
 
     } catch (error) {
@@ -84,13 +84,13 @@ async function testSerperSearch() {
   }
   const client = new SerperClient(apiKey);
   try {
-    const response = await client.search({ 
+    const response = await client.search({
       q: 'Latest news on renewable energy',
       num: 5,
       location: 'London, United Kingdom',
       type: 'news'
     });
-    
+
     console.log('[SerperClient Test] Search Response:', JSON.stringify(response, null, 2));
     if (response.organic.length > 0) {
         response.organic.forEach(result => {

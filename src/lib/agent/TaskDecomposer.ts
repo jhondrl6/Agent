@@ -9,7 +9,7 @@ export class TaskDecomposer {
   private addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
 
   constructor(
-    geminiApiKey: string, 
+    geminiApiKey: string,
     addLogFunction: (entryData: { level: LogLevel; message: string; details?: any }) => void
   ) {
     if (!geminiApiKey) {
@@ -52,7 +52,7 @@ Okay, now decompose the following user request. Ensure your output is ONLY the J
 
 User Request:
 ${userPrompt}`;
-    
+
     const geminiParams: GeminiRequestParams = {
         prompt: fullPrompt,
         temperature: 0.3, // Lower temperature for more deterministic, structured output
@@ -62,7 +62,7 @@ ${userPrompt}`;
     try {
       this.addLog({ level: 'debug', message: `[TD] Sending prompt to LLM for task decomposition for mission ${mission.id}.`, details: { promptSummary: fullPrompt.substring(0, 250) + "..." } }); // Log fullPrompt summary
       const response = await this.geminiClient.generate(geminiParams);
-      
+
       const rawJsonResponse = response.candidates?.[0]?.content?.parts?.[0]?.text;
       this.addLog({ level: 'debug', message: `[TD] Received LLM response for mission ${mission.id}.`, details: { summary: rawJsonResponse?.substring(0,150) } });
 
@@ -95,7 +95,7 @@ ${userPrompt}`;
           console.error('[TaskDecomposer] Parsed JSON is not in the expected format (array of {description: string}). Parsed:', decomposedTaskDescriptions);
           throw new Error('Gemini response not in the expected task description format after parsing.');
       }
-      
+
       if (decomposedTaskDescriptions.length === 0) {
         console.warn('[TaskDecomposer] Gemini returned an empty array of tasks for mission:', mission.goal);
         // Decide if this is an error or a valid case (e.g., mission too simple)
@@ -103,7 +103,7 @@ ${userPrompt}`;
       }
 
       const mappedTasks = decomposedTaskDescriptions.map((taskDesc, index) => ({
-        id: `${mission.id}-task-${String(index + 1).padStart(3, '0')}`, 
+        id: `${mission.id}-task-${String(index + 1).padStart(3, '0')}`,
         missionId: mission.id,
         description: taskDesc.description,
         status: 'pending',
@@ -112,13 +112,13 @@ ${userPrompt}`;
         updatedAt: new Date(),
         result: undefined,
       }));
-      
+
       this.addLog({ level: 'info', message: `[TD] Mission ${mission.id} decomposed into ${mappedTasks.length} tasks.`}); // Added missing closing backtick
       return mappedTasks;
 
     } catch (error: any) {
       this.addLog({ level: 'error', message: `[TD] Error decomposing mission ${mission.id}: ${error.message}`, details: { missionId: mission.id, missionGoal: mission.goal, errorDetails: error } });
-      
+
       // Fallback to a single task indicating failure
       return [
         {

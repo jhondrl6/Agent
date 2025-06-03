@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
     const client = new GeminiClient(apiKey);
     const params: GeminiRequestParams = { prompt, ...restParams };
-    
+
     const response = await client.generate(params);
 
     return NextResponse.json(response);
