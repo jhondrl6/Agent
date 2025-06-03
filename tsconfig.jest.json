@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json", // Inherit from your main tsconfig
+  "compilerOptions": {
+    "jsx": "react-jsx", // or "preserve" if you handle JSX transformation differently for tests
+    "module": "commonjs" // Jest typically runs in a Node-like environment that prefers CommonJS
+    // You might not need to override "types" here if your main tsconfig includes "jest"
+    // or if @types/jest is globally available.
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts", // Include .ts files from src and tests
+    "**/*.tsx", // Include .tsx files from src and tests
+    "jest.setup.js", // Include setup file if it's JS
+    "jest.config.js" // Include config file if it's JS
+    // Add specific test file patterns if needed, e.g., "**/*.test.ts", "**/*.spec.ts"
+  ],
+  "exclude": [
+    "node_modules"
+    // Exclude any other directories not relevant to tests
+  ]
+}
