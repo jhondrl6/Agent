@@ -1,0 +1,188 @@
+// src/lib/database/services.ts
+import { PrismaClient, Mission, Task } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+// Type guards for parsing JSON strings
+function isValidJson(str: string): boolean {
+  try {
+    JSON.parse(str);
+  } catch (e) {
+    return false;
+  }
+  return true;
+}
+
+// Mission Services
+export async function createMission(missionData: {
+  goal: string;
+  status: string;
+  result?: string;
+  tasks?: { create: Omit<Task, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>[] }; // For creating tasks along with mission
+}): Promise<Mission> {
+  return prisma.mission.create({
+    data: {
+      ...missionData,
+      tasks: missionData.tasks ? missionData.tasks : undefined,
+    },
+    include: { tasks: true }, // Include tasks in the returned mission object
+  });
+}
+
+export async function getMissionById(missionId: string): Promise<Mission | null> {
+  const mission = await prisma.mission.findUnique({
+    where: { id: missionId },
+    include: { tasks: true },
+  });
+  if (mission && mission.tasks) {
+    mission.tasks = mission.tasks.map(task => ({
+      ...task,
+      result: task.result && isValidJson(task.result) ? JSON.parse(task.result) : task.result,
+      failureDetails: task.failureDetails && isValidJson(task.failureDetails) ? JSON.parse(task.failureDetails) : task.failureDetails,
+      validationOutcome: task.validationOutcome && isValidJson(task.validationOutcome) ? JSON.parse(task.validationOutcome) : task.validationOutcome,
+    }));
+  }
+  return mission;
+}
+
+export async function updateMission(
+  missionId: string,
+  updates: Partial<Omit<Mission, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<Mission | null> {
+  return prisma.mission.update({
+    where: { id: missionId },
+    data: updates,
+    include: { tasks: true },
+  });
+}
+
+export async function deleteMission(missionId: string): Promise<Mission | null> {
+  // Prisma requires related records (tasks) to be deleted first if there's a required relation.
+  // Or, use cascaded deletes in the schema if appropriate (prisma.schema).
+  // For now, we'll assume tasks should be deleted with their mission.
+  // This can be handled by setting up cascading deletes in `schema.prisma`
+  // by adding `onDelete: Cascade` to the mission field in the Task model.
+  // Let's assume we will add that to the schema later.
+  // If not, tasks must be deleted manually here first.
+  await prisma.task.deleteMany({ where: { missionId } });
+  return prisma.mission.delete({
+    where: { id: missionId },
+  });
+}
+
+// Task Services
+export async function createTask(taskData: {
+  missionId: string;
+  description: string;
+  status: string;
+  result?: any;
+  retries?: number;
+  failureDetails?: any;
+  validationOutcome?: any;
+}): Promise<Task> {
+  return prisma.task.create({
+    data: {
+      ...taskData,
+      result: taskData.result ? JSON.stringify(taskData.result) : undefined,
+      failureDetails: taskData.failureDetails ? JSON.stringify(taskData.failureDetails) : undefined,
+      validationOutcome: taskData.validationOutcome ? JSON.stringify(taskData.validationOutcome) : undefined,
+    },
+  });
+}
+
+export async function getTaskById(taskId: string): Promise<Task | null> {
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+  });
+  if (task) {
+    return {
+      ...task,
+      result: task.result && isValidJson(task.result) ? JSON.parse(task.result) : task.result,
+      failureDetails: task.failureDetails && isValidJson(task.failureDetails) ? JSON.parse(task.failureDetails) : task.failureDetails,
+      validationOutcome: task.validationOutcome && isValidJson(task.validationOutcome) ? JSON.parse(task.validationOutcome) : task.validationOutcome,
+    };
+  }
+  return null;
+}
+
+export async function updateTask(
+  taskId: string,
+  updates: Partial<Omit<Task, 'id' | 'missionId' | 'createdAt' | 'updatedAt'>>
+): Promise<Task | null> {
+  const { result, failureDetails, validationOutcome, ...restOfUpdates } = updates;
+  return prisma.task.update({
+    where: { id: taskId },
+    data: {
+        ...restOfUpdates,
+        result: result !== undefined ? JSON.stringify(result) : undefined,
+        failureDetails: failureDetails !== undefined ? JSON.stringify(failureDetails) : undefined,
+        validationOutcome: validationOutcome !== undefined ? JSON.stringify(validationOutcome) : undefined,
+    },
+  });
+}
+
+export async function deleteTask(taskId: string): Promise<Task | null> {
+  return prisma.task.delete({
+    where: { id: taskId },
+  });
+}
+
+export async function getTasksByMissionId(missionId: string): Promise<Task[]> {
+  const tasks = await prisma.task.findMany({
+    where: { missionId: missionId },
+  });
+  return tasks.map(task => ({
+    ...task,
+    result: task.result && isValidJson(task.result) ? JSON.parse(task.result) : task.result,
+    failureDetails: task.failureDetails && isValidJson(task.failureDetails) ? JSON.parse(task.failureDetails) : task.failureDetails,
+    validationOutcome: task.validationOutcome && isValidJson(task.validationOutcome) ? JSON.parse(task.validationOutcome) : task.validationOutcome,
+  }));
+}
+
+// Optional: Add a function to disconnect Prisma client on application shutdown
+export async function disconnectPrisma() {
+  await prisma.$disconnect();
+}
+
+// Example of how to use these services (for testing purposes, not part of the file itself)
+/*
+async function main() {
+  // Create a mission
+  const newMission = await createMission({
+    goal: 'Test mission',
+    status: 'pending',
+  });
+  console.log('Created mission:', newMission);
+
+  // Add a task to the mission
+  if (newMission) {
+    const newTask = await createTask({
+      missionId: newMission.id,
+      description: 'Test task 1 for mission ' + newMission.id,
+      status: 'pending',
+      result: { data: 'some initial data' },
+    });
+    console.log('Created task:', newTask);
+
+    // Get mission by ID
+    const fetchedMission = await getMissionById(newMission.id);
+    console.log('Fetched mission with tasks:', fetchedMission);
+
+    // Update task
+    if (newTask) {
+      const updatedTask = await updateTask(newTask.id, { status: 'completed', result: { data: 'updated data' } });
+      console.log('Updated task:', updatedTask);
+    }
+
+    // Get tasks by mission ID
+    const tasksForMission = await getTasksByMissionId(newMission.id);
+    console.log('Tasks for mission:', tasksForMission);
+  }
+}
+
+main().catch(e => {
+  console.error(e);
+  disconnectPrisma();
+  process.exit(1);
+});
+*/

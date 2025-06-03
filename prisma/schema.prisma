@@ -1,0 +1,35 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Mission {
+  id        String   @id @default(uuid())
+  goal      String
+  status    String   // pending, in-progress, completed, failed
+  result    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tasks     Task[]
+}
+
+model Task {
+  id        String   @id @default(uuid())
+  missionId String
+  mission   Mission  @relation(fields: [missionId], references: [id], onDelete: Cascade)
+  description String
+  status    String   // pending, in-progress, completed, failed, retrying
+  result    String?  // JSON stored as String, parse when reading
+  retries   Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  failureDetails String? // JSON stored as String, parse when reading
+  validationOutcome String? // JSON stored as String, parse when reading
+}
