@@ -4,29 +4,7 @@
 import React from 'react';
 import { useAgentStore } from '@/lib/agent/StateManager';
 import { Task } from '@/lib/types/agent'; // Import Task type
-
-// Placeholder ProgressBar as src/components/ui/progress.tsx is empty
-// TODO: Replace with actual component from src/components/ui/progress.tsx when implemented
-const ProgressBar = ({ value, max = 100 }: { value: number; max?: number }) => {
-  const percentage = max > 0 ? (value / max) * 100 : 0;
-  return (
-    <div
-      className="w-full bg-gray-200 rounded-full h-4 overflow-hidden border border-gray-300"
-      role="progressbar"
-      aria-valuenow={percentage} // Using the direct percentage for aria-valuenow
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-label={`Progress: ${percentage.toFixed(1)}%`} // Optional: for better screen reader feedback
-    >
-      <div
-        className="bg-green-500 h-full rounded-full transition-all duration-300 ease-in-out flex items-center justify-center"
-        style={{ width: `${percentage}%` }}
-      >
-        {percentage > 10 && <span className="text-xs font-medium text-white">{percentage.toFixed(0)}%</span>}
-      </div>
-    </div>
-  );
-};
+import { ProgressBar } from '@/components/ui/progress';
 
 
 export function ProgressMonitor() {

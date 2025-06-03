@@ -1,6 +1,7 @@
 // src/lib/agent/StateManager.ts
 import { create } from 'zustand';
 import { Mission, Task, AgentState, LogEntry, LogLevel } from '@/lib/types/agent';
+import * as logger from '../utils/logger';
 
 interface StoreState {
   missions: Record<string, Mission>;
@@ -23,7 +24,6 @@ interface StoreActions {
   addLog: (entryData: { level: LogLevel; message: string; details?: any }) => void;
   manualCompleteTask: (missionId: string, taskId: string, manualResultText?: string) => void;
   manualFailTask: (missionId: string, taskId: string, manualReason: string) => void;
-  // Potentially add more actions as needed
 }
 
 const MAX_LOG_ENTRIES = 200; // Or any preferred number
@@ -212,6 +212,118 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
       }
       return { logs: updatedLogs };
     }),
+
+  manualCompleteTask: (missionId, taskId, manualResultText) => {
+    const state = get();
+    const mission = state.missions[missionId];
+
+    if (!mission || !mission.tasks) {
+      logger.warn(`Mission or tasks not found for manual completion.`, 'StateManager', { missionId, taskId });
+      return;
+    }
+
+    const taskIndex = mission.tasks.findIndex(t => t.id === taskId);
+    if (taskIndex === -1) {
+      logger.warn(`Task not found for manual completion.`, 'StateManager', { missionId, taskId });
+      return;
+    }
+
+    const updatedTask: Task = {
+      ...mission.tasks[taskIndex],
+      status: 'completed',
+      result: manualResultText || 'Manually completed by user.',
+      validationOutcome: {
+        isValid: true,
+        critique: 'Manually approved by user.',
+        suggestedAction: 'none',
+        validatedAt: new Date(),
+      },
+      updatedAt: new Date(),
+      failureDetails: undefined,
+    };
+
+    const updatedTasks = [...mission.tasks];
+    updatedTasks[taskIndex] = updatedTask;
+
+    set((currentState) => ({
+      missions: {
+        ...currentState.missions,
+        [missionId]: {
+          ...mission,
+          tasks: updatedTasks,
+          updatedAt: new Date(),
+        },
+      },
+      agentState: {
+        ...currentState.agentState,
+        activeTasks: currentState.agentState.activeTasks.filter(id => id !== taskId),
+        isLoading: currentState.agentState.activeTasks.filter(id => id !== taskId).length > 0,
+      },
+    }));
+
+    state.addLog({
+      level: 'info',
+      message: `Task '${taskId}' in mission '${missionId}' manually marked as COMPLETED.`,
+      details: { missionId, taskId, result: manualResultText },
+    });
+    logger.info(`Task '${taskId}' manually marked as COMPLETED.`, 'StateManager', { missionId, taskId, result: manualResultText });
+  },
+
+  manualFailTask: (missionId, taskId, manualReason) => {
+    const state = get();
+    const mission = state.missions[missionId];
+
+    if (!mission || !mission.tasks) {
+      logger.warn(`Mission or tasks not found for manual failure.`, 'StateManager', { missionId, taskId });
+      return;
+    }
+
+    const taskIndex = mission.tasks.findIndex(t => t.id === taskId);
+    if (taskIndex === -1) {
+      logger.warn(`Task not found for manual failure.`, 'StateManager', { missionId, taskId });
+      return;
+    }
+
+    const updatedTask: Task = {
+      ...mission.tasks[taskIndex],
+      status: 'failed',
+      result: 'Manually failed by user.', // Or keep undefined, or use part of manualReason
+      failureDetails: {
+        originalError: manualReason,
+        suggestedAction: 'abandon',
+        handledAt: new Date(),
+        isManualFailure: true,
+      },
+      validationOutcome: undefined,
+      updatedAt: new Date(),
+    };
+
+    const updatedTasks = [...mission.tasks];
+    updatedTasks[taskIndex] = updatedTask;
+
+    set((currentState) => ({
+      missions: {
+        ...currentState.missions,
+        [missionId]: {
+          ...mission,
+          tasks: updatedTasks,
+          updatedAt: new Date(),
+        },
+      },
+      agentState: {
+        ...currentState.agentState,
+        activeTasks: currentState.agentState.activeTasks.filter(id => id !== taskId),
+        isLoading: currentState.agentState.activeTasks.filter(id => id !== taskId).length > 0,
+      },
+    }));
+
+    state.addLog({
+      level: 'warn',
+      message: `Task '${taskId}' in mission '${missionId}' manually marked as FAILED.`,
+      details: { missionId, taskId, reason: manualReason },
+    });
+    logger.warn(`Task '${taskId}' manually marked as FAILED.`, 'StateManager', { missionId, taskId, reason: manualReason });
+  },
 }));
 
 // Log store changes in development for debugging

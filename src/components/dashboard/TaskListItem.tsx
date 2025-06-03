@@ -2,6 +2,7 @@
 'use client';
 import React from 'react';
 import { Task } from '@/lib/types/agent';
+import { useAgentStore } from '@/lib/agent/StateManager';
 import { getStatusPillClasses } from './utils';
 import { DecisionEngine } from '@/lib/agent/DecisionEngine'; // For MAX_TASK_RETRIES
 
@@ -11,6 +12,25 @@ interface TaskListItemProps {
 }
 
 const TaskListItemInternal = ({ task, onTaskClick }: TaskListItemProps) => {
+  const storeManualCompleteTask = useAgentStore((state) => state.manualCompleteTask);
+  const storeManualFailTask = useAgentStore((state) => state.manualFailTask);
+
+  const handleMarkComplete = () => {
+    const resultText = window.prompt("Enter optional result text for manual completion:", "Manually completed.");
+    if (resultText !== null) { // User did not cancel prompt
+      storeManualCompleteTask(task.missionId, task.id, resultText);
+    }
+  };
+
+  const handleMarkFailed = () => {
+    const reason = window.prompt("Enter reason for manual failure:", "");
+    if (reason !== null && reason.trim() !== "") { // User did not cancel and provided a reason
+      storeManualFailTask(task.missionId, task.id, reason.trim());
+    } else if (reason !== null) { // User submitted an empty reason
+        alert("Reason cannot be empty for manual failure.");
+    }
+  };
+
   // console.log(`[TaskListItem] Rendering ${task.id} - Status: ${task.status}`); // For debugging memoization
 
   let previewText = "";
@@ -66,6 +86,29 @@ const TaskListItemInternal = ({ task, onTaskClick }: TaskListItemProps) => {
         <p className="text-xs text-gray-500 truncate italic" title={previewTitle}>
           {previewText}
         </p>
+      )}
+
+      {/* Manual Actions */}
+      { (task.status === 'pending' || task.status === 'in-progress' || task.status === 'failed' || task.status === 'retrying') && (
+      <div className="mt-2 pt-2 border-t border-gray-100 flex items-center space-x-2">
+        <span className="text-xs font-medium text-gray-500">Manual:</span>
+        <button
+          onClick={(e) => { e.stopPropagation(); handleMarkComplete(); }}
+          disabled={task.status === 'completed'}
+          className="px-2 py-1 text-xs font-medium text-white bg-green-600 rounded hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 disabled:opacity-60 disabled:cursor-not-allowed"
+          title="Manually mark task as completed"
+        >
+          ✔️ Complete
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); handleMarkFailed(); }}
+          disabled={task.status === 'completed'} // Already completed tasks can't be failed. Failed tasks can be re-failed (e.g. new reason)
+          className="px-2 py-1 text-xs font-medium text-white bg-red-600 rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 disabled:opacity-60 disabled:cursor-not-allowed"
+          title="Manually mark task as failed"
+        >
+          ❌ Fail
+        </button>
+      </div>
       )}
     </li>
   );
