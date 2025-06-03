@@ -8,10 +8,10 @@ interface ModalProps {
   onClose: () => void;
   title?: string;
   children: ReactNode;
-  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full'; // Added 2xl
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
 }
 
-export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalProps) {
+const ModalComponent = ({ isOpen, onClose, title, children, size = 'md' }: ModalProps) => {
   useEffect(() => {
     const handleEscapeKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -97,4 +97,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md' }: ModalPr
       `}</style>
     </div>
   );
-}
+};
+
+export const Modal = React.memo(ModalComponent);
+Modal.displayName = 'Modal';
