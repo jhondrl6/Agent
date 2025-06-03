@@ -17,12 +17,11 @@ const customJestConfig = {
     '^@/app/(.*)$': '<rootDir>/src/app/$1',
     // Add other aliases as needed
   },
-  transform: {
-    // Use ts-jest for .ts/.tsx files
-    '^.+\\.(ts|tsx)$': ['ts-jest', {
-        tsconfig: '<rootDir>/tsconfig.jest.json' // Separate tsconfig for Jest if needed, or use default
-    }]
-  },
+  // Let next/jest handle transforms; SWC should pick up JS/TS files.
+  transformIgnorePatterns: [
+    "/node_modules/(?!(tavily|ky))/", // Do NOT ignore tavily or ky (i.e., transform them)
+    "\\.pnp\\.[^\\/]+$", // Default pnp ignore
+  ],
   // Automatically clear mock calls, instances and results before every test
   clearMocks: true,
 };

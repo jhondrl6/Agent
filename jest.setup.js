@@ -21,6 +21,39 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 });
 
+// Mock scrollIntoView for components that use it (like LogsPanel)
+// JSDOM doesn't implement layout-related APIs like scrollIntoView
+if (typeof window !== 'undefined') {
+  window.HTMLElement.prototype.scrollIntoView = jest.fn();
+}
+
+// --- Global Mocks for persistent problematic imports ---
+
+// Mock TavilyClient globally to prevent ESM import issues in tests
+// Ensure this mock function is defined in a scope accessible by the factory
+let mockTavilySearchGlobal = jest.fn();
+jest.mock('@/lib/search/TavilyClient', () => ({
+  TavilyClient: jest.fn().mockImplementation(() => ({
+    search: mockTavilySearchGlobal,
+    // constructor: jest.fn(), // If constructor itself needs to be asserted upon
+  })),
+}));
+
+// Helper to clear this global mock if needed in specific test suites' beforeEach/afterEach
+export const clearMockTavilySearchGlobal = () => {
+  mockTavilySearchGlobal.mockClear();
+  // Also clear constructor mocks if TavilyClient itself is asserted on for number of instantiations
+  const ActualMockedTavilyClient = jest.requireMock('@/lib/search/TavilyClient').TavilyClient;
+  if (ActualMockedTavilyClient && ActualMockedTavilyClient.mockClear) {
+    ActualMockedTavilyClient.mockClear();
+  }
+};
+
+// You can re-export the mock function if tests need to manipulate it directly,
+// though it's often better to rely on its usage via the modules that import TavilyClient.
+export { mockTavilySearchGlobal };
+
+
 // Example: Suppress console.error or console.warn if specific known warnings are flooding tests
 // let originalError;
 // beforeAll(() => {

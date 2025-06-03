@@ -10,7 +10,14 @@ import { Task } from '@/lib/types/agent'; // Import Task type
 const ProgressBar = ({ value, max = 100 }: { value: number; max?: number }) => {
   const percentage = max > 0 ? (value / max) * 100 : 0;
   return (
-    <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden border border-gray-300">
+    <div
+      className="w-full bg-gray-200 rounded-full h-4 overflow-hidden border border-gray-300"
+      role="progressbar"
+      aria-valuenow={percentage} // Using the direct percentage for aria-valuenow
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-label={`Progress: ${percentage.toFixed(1)}%`} // Optional: for better screen reader feedback
+    >
       <div
         className="bg-green-500 h-full rounded-full transition-all duration-300 ease-in-out flex items-center justify-center"
         style={{ width: `${percentage}%` }}
@@ -97,7 +104,7 @@ export function ProgressMonitor() {
         <h4 className="font-semibold text-gray-700 mb-1">Agent Status:</h4>
         {agentState.isLoading ? ( // Combined isLoading check
             <div className="flex items-center text-yellow-600">
-                <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-yellow-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <svg data-testid="loading-spinner" className="animate-spin -ml-1 mr-2 h-5 w-5 text-yellow-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>

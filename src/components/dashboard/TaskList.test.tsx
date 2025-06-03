@@ -34,7 +34,7 @@ jest.mock('@/components/ui/modal', () => ({
     ) : null
   ),
 }));
-const MockedModal = require('@/components/ui/Modal').Modal as jest.MockedFunction<any>;
+const MockedModal = require('@/components/ui/modal').Modal as jest.MockedFunction<any>; // Corrected path to lowercase 'modal'
 
 
 jest.mock('@/lib/agent/TaskExecutor');
@@ -65,40 +65,61 @@ const taskFailed: Task = { id: 'task-f1', missionId: 'mission-1', description: '
 
 
 describe('TaskList Component', () => {
-  const user = userEvent.setup({ delay: null }); // delay: null for faster userEvent in tests
+  const user = userEvent.setup({ delay: null });
+
+  // Helper to set up the store mock for a given state
+  const setupStoreMocks = (state: any) => {
+    mockedUseAgentStore.mockImplementation((selectorCallback?: (s: any) => any) => {
+      if (selectorCallback) {
+        return selectorCallback(state);
+      }
+      return state; // Should not happen with how Zustand is typically used with selectors
+    });
+    mockedUseAgentStore.getState = jest.fn(() => state);
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
     MockedTaskExecutor.prototype.executeTask = mockExecuteTask;
 
-    mockedUseAgentStore.mockImplementation((selector: any) => {
-      const state = {
-        missions: { 'mission-1': { ...mockMissionBase, tasks: [taskPending, taskInProgress, taskCompleted, taskFailed] } },
-        agentState: { currentMissionId: 'mission-1', isLoading: false, error: null, activeTasks: [taskInProgress.id] },
-        logs: [],
-        addLog: mockAddLog,
-        manualCompleteTask: mockManualCompleteTask,
-        manualFailTask: mockManualFailTask,
-        updateTask: mockUpdateTask,
-      };
-      return selector(state);
-    });
+    // Default state setup for most tests
+    const defaultTestState = {
+      missions: { [mockMissionBase.id]: { ...mockMissionBase, tasks: [taskPending, taskInProgress, taskCompleted, taskFailed] } },
+      agentState: { currentMissionId: mockMissionBase.id, isLoading: false, error: null, activeTasks: [taskInProgress.id] },
+      logs: [],
+      addLog: mockAddLog,
+      manualCompleteTask: mockManualCompleteTask,
+      manualFailTask: mockManualFailTask,
+      updateTask: mockUpdateTask,
+    };
+    setupStoreMocks(defaultTestState);
     (global.prompt as jest.Mock).mockReturnValue('Test reason');
   });
 
   it('should display "No mission active" if no currentMissionId', () => {
-    mockedUseAgentStore.mockImplementation((selector: any) => selector({ missions: {}, agentState: { currentMissionId: null, logs:[] } } as any));
+    const stateForNoMission = {
+      missions: {},
+      agentState: { currentMissionId: null, isLoading: false, error: null, activeTasks: [] },
+      logs: [], addLog: mockAddLog, manualCompleteTask: mockManualCompleteTask, manualFailTask: mockManualFailTask, updateTask: mockUpdateTask,
+    };
+    setupStoreMocks(stateForNoMission);
     render(<TaskList />);
     expect(screen.getByText('No mission active or selected.')).toBeInTheDocument();
   });
 
   it('should display "No tasks" if mission has no tasks', () => {
-    mockedUseAgentStore.mockImplementation((selector: any) => selector({ missions: { 'mission-1': { ...mockMissionBase, tasks: [] } }, agentState: { currentMissionId: 'mission-1', logs:[] } } as any));
+    const stateForNoTasks = {
+      missions: { [mockMissionBase.id]: { ...mockMissionBase, tasks: [] } },
+      agentState: { currentMissionId: mockMissionBase.id, isLoading: false, error: null, activeTasks: [] },
+      logs: [], addLog: mockAddLog, manualCompleteTask: mockManualCompleteTask, manualFailTask: mockManualFailTask, updateTask: mockUpdateTask,
+    };
+    setupStoreMocks(stateForNoTasks);
     render(<TaskList />);
     expect(screen.getByText(/No tasks decomposed for this mission yet/i)).toBeInTheDocument();
   });
 
   it('should render a list of tasks using TaskListItem', () => {
+    // Uses default state from beforeEach
     render(<TaskList />);
     expect(MockedTaskListItem).toHaveBeenCalledTimes(4);
     expect(screen.getByTestId(`task-item-${taskPending.id}`)).toHaveTextContent(taskPending.description);
@@ -106,27 +127,32 @@ describe('TaskList Component', () => {
 
   describe('"Run All Pending Tasks" Button', () => {
     it('should be disabled if agent is loading or no pending tasks', () => {
-      mockedUseAgentStore.mockImplementation((selector: any) => selector({
-        missions: { 'mission-1': { ...mockMissionBase, tasks: [taskPending] } },
-        agentState: { currentMissionId: 'mission-1', isLoading: true, activeTasks: [], logs:[] }
-      } as any));
+      const stateAgentLoading = {
+        missions: { [mockMissionBase.id]: { ...mockMissionBase, tasks: [taskPending] } },
+        agentState: { currentMissionId: mockMissionBase.id, isLoading: true, activeTasks: [], error: null },
+        logs: [], addLog: mockAddLog, manualCompleteTask: mockManualCompleteTask, manualFailTask: mockManualFailTask, updateTask: mockUpdateTask,
+      };
+      setupStoreMocks(stateAgentLoading);
       const { rerender } = render(<TaskList />);
       expect(screen.getByRole('button', { name: /executing/i })).toBeDisabled();
 
-      mockedUseAgentStore.mockImplementation((selector: any) => selector({
-        missions: { 'mission-1': { ...mockMissionBase, tasks: [taskCompleted] } },
-        agentState: { currentMissionId: 'mission-1', isLoading: false, activeTasks: [], logs:[] }
-      }as any));
+      const stateNoPending = {
+        missions: { [mockMissionBase.id]: { ...mockMissionBase, tasks: [taskCompleted] } },
+        agentState: { currentMissionId: mockMissionBase.id, isLoading: false, activeTasks: [], error: null },
+        logs: [], addLog: mockAddLog, manualCompleteTask: mockManualCompleteTask, manualFailTask: mockManualFailTask, updateTask: mockUpdateTask,
+      };
+      setupStoreMocks(stateNoPending);
       rerender(<TaskList />);
       expect(screen.getByRole('button', { name: /run all pending tasks/i })).toBeDisabled();
     });
 
     it('should call handleExecutePendingTasks on click and instantiate TaskExecutor for pending tasks', async () => {
-      mockedUseAgentStore.mockImplementation((selector: any) => selector({
-        missions: { 'mission-1': { ...mockMissionBase, tasks: [taskPending, taskCompleted] } },
-        agentState: { currentMissionId: 'mission-1', isLoading: false, activeTasks: [], logs:[] },
-        addLog: mockAddLog
-      } as any));
+      const stateWithPending = {
+        missions: { [mockMissionBase.id]: { ...mockMissionBase, tasks: [taskPending, taskCompleted] } },
+        agentState: { currentMissionId: mockMissionBase.id, isLoading: false, activeTasks: [], error: null },
+        logs: [], addLog: mockAddLog, manualCompleteTask: mockManualCompleteTask, manualFailTask: mockManualFailTask, updateTask: mockUpdateTask,
+      };
+      setupStoreMocks(stateWithPending);
       render(<TaskList />);
       const runButton = screen.getByRole('button', { name: /run all pending tasks/i });
       await user.click(runButton);
@@ -139,6 +165,7 @@ describe('TaskList Component', () => {
 
   describe('Task Detail Modal and Manual Overrides', () => {
     it('should open modal with task details on task click', async () => {
+      // Uses default state from beforeEach
       render(<TaskList />);
       const taskItem = screen.getByTestId(`task-item-${taskCompleted.id}`);
       await user.click(taskItem);
@@ -146,12 +173,11 @@ describe('TaskList Component', () => {
       expect(MockedModal).toHaveBeenCalledWith(expect.objectContaining({ isOpen: true, title: expect.stringContaining(taskCompleted.id.substring(0,15)) }), {});
       await screen.findByTestId('mock-modal');
       expect(screen.getByTestId('mock-modal-title')).toHaveTextContent(taskCompleted.id.substring(0,15));
-      // The children are rendered inside the modal mock, so we can query for them.
-      // TaskList passes a div that contains the description etc.
       expect(screen.getByText(taskCompleted.description)).toBeInTheDocument();
     });
 
     it('should call manualCompleteTask action when "Mark Completed" is clicked in modal', async () => {
+      // Uses default state from beforeEach
       render(<TaskList />);
       await user.click(screen.getByTestId(`task-item-${taskPending.id}`));
       await screen.findByTestId('mock-modal');
@@ -160,24 +186,26 @@ describe('TaskList Component', () => {
       await user.click(markCompletedButton);
 
       expect(global.prompt).toHaveBeenCalled();
-      expect(mockManualCompleteTask).toHaveBeenCalledWith(missionId, taskPending.id, 'Test reason');
+      expect(mockManualCompleteTask).toHaveBeenCalledWith(mockMissionBase.id, taskPending.id, 'Test reason');
       expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'system', message: expect.stringContaining('manually marked COMPLETED') }));
     });
 
     it('should call manualFailTask action when "Mark Failed" is clicked', async () => {
+      // Uses default state from beforeEach
       render(<TaskList />);
       await user.click(screen.getByTestId(`task-item-${taskPending.id}`));
       await screen.findByTestId('mock-modal');
 
-      const markFailedButton = screen.getByRole('button', { name: /mark as failed/i });
+      const markFailedButton = screen.getByRole('button', { name: /mark as failed/i }); // Corrected name
       await user.click(markFailedButton);
 
       expect(global.prompt).toHaveBeenCalled();
-      expect(mockManualFailTask).toHaveBeenCalledWith(missionId, taskPending.id, 'Test reason');
+      expect(mockManualFailTask).toHaveBeenCalledWith(mockMissionBase.id, taskPending.id, 'Test reason');
       expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'system', message: expect.stringContaining('manually marked FAILED') }));
     });
 
     it('should call TaskExecutor.executeTask when "Force Retry" is clicked', async () => {
+      // Uses default state from beforeEach
       render(<TaskList />);
       await user.click(screen.getByTestId(`task-item-${taskFailed.id}`));
       await screen.findByTestId('mock-modal');
@@ -186,15 +214,15 @@ describe('TaskList Component', () => {
       await user.click(forceRetryButton);
 
       expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'system', message: expect.stringContaining('Force retry triggered') }));
-      expect(mockUpdateTask).toHaveBeenCalledWith(missionId, taskFailed.id, expect.objectContaining({
+      expect(mockUpdateTask).toHaveBeenCalledWith(mockMissionBase.id, taskFailed.id, expect.objectContaining({
         status: 'pending',
         result: undefined,
         failureDetails: undefined,
         validationOutcome: undefined
       }));
-      expect(MockedTaskExecutor).toHaveBeenCalledTimes(1);
-      expect(mockExecuteTask).toHaveBeenCalledTimes(1);
-      expect(mockExecuteTask).toHaveBeenCalledWith(missionId, expect.objectContaining({
+      expect(MockedTaskExecutor).toHaveBeenCalledTimes(1); // Instantiated in handleForceRetry
+      expect(mockExecuteTask).toHaveBeenCalledTimes(1); // Called on the instance
+      expect(mockExecuteTask).toHaveBeenCalledWith(mockMissionBase.id, expect.objectContaining({
         id: taskFailed.id,
         status: 'pending',
         retries: taskFailed.retries

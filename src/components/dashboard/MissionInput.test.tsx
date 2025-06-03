@@ -77,10 +77,8 @@ describe('MissionInput Component', () => {
   });
 
   it('should call fetch with correct parameters on submit and show loading', async () => {
-    (fetch as jest.Mock).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ id: 'mission-123', goal: 'Test mission goal', status: 'pending', tasks: [] }),
-    });
+    // Mock fetch to never resolve for this test to observe loading state
+    (fetch as jest.Mock).mockImplementationOnce(() => new Promise(() => {}));
 
     render(<MissionInput />);
     const input = screen.getByPlaceholderText('Enter your research mission goal...');
@@ -89,9 +87,11 @@ describe('MissionInput Component', () => {
     await user.type(input, 'Test mission goal');
     await user.click(submitButton);
 
-    expect(submitButton).toBeDisabled();
-    expect(submitButton).toHaveTextContent(/starting.../i);
+    // Wait for the button text to change to "Starting..." and then check if it's disabled
+    const loadingButton = await screen.findByRole('button', { name: /starting.../i });
+    expect(loadingButton).toBeDisabled();
 
+    // Check fetch call (it won't resolve, but it should have been called)
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     expect(fetch).toHaveBeenCalledWith('/api/agent/mission', {
       method: 'POST',
@@ -101,23 +101,31 @@ describe('MissionInput Component', () => {
   });
 
   it('should clear input and display success message on successful API response', async () => {
-    const mockMissionResponse = { id: 'mission-123', goal: 'Test mission goal', status: 'pending', tasks: [] };
+    const mockMissionResponse = { id: 'mission-123', goal: 'Test mission goal', status: 'pending', createdAt: new Date().toISOString(), tasks: [] };
     (fetch as jest.Mock).mockResolvedValueOnce({
       ok: true,
       json: async () => mockMissionResponse,
     });
 
     render(<MissionInput />);
-    const input = screen.getByPlaceholderText('Enter your research mission goal...');
+    const inputElement = screen.getByPlaceholderText('Enter your research mission goal...');
     const submitButton = screen.getByRole('button', { name: /start mission/i });
 
-    await user.type(input, 'Test mission goal');
+    await user.type(inputElement, 'Test mission goal');
     await user.click(submitButton);
 
-    await waitFor(() => expect(input).toHaveValue(''));
-    expect(await screen.findByText('Mission Successfully Initiated!')).toBeInTheDocument();
-    expect(screen.getByText(/id: mission-123/i)).toBeInTheDocument(); // More flexible match for ID
-    expect(submitButton).not.toBeDisabled();
+    // Wait for a general part of the success message first
+    const successTitleElement = await screen.findByText('Mission Successfully Initiated!');
+    expect(successTitleElement).toBeInTheDocument();
+
+    // Get the parent of the title (which should be the success message div)
+    // and check for the ID within its text content
+    const successMessageContainer = successTitleElement.parentElement;
+    expect(successMessageContainer).toHaveTextContent(/id: mission-123/i);
+
+    // Check other outcomes of success
+    expect(inputElement).toHaveValue(''); // Input should be cleared
+    expect(submitButton).not.toBeDisabled(); // Button should be re-enabled
   });
 
   it('should display an error message if API call fails with structured error', async () => {

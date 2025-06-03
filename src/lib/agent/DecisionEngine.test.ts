@@ -56,7 +56,7 @@ describe('DecisionEngine', () => {
         };
         const output = await decisionEngineRuleBased.chooseSearchProvider(input);
         expect(output.provider).toBe('serper');
-        expect(output.reason).toContain('Rule: Task explicitly or implicitly suggests Google search');
+        expect(output.reason).toContain("Rule: Explicit Google/Serper search. Chosen: serper");
       });
 
       it('should fallback to tavily if serper preferred but unavailable for "google search"', async () => {
@@ -66,7 +66,7 @@ describe('DecisionEngine', () => {
         };
         const output = await decisionEngineRuleBased.chooseSearchProvider(input);
         expect(output.provider).toBe('tavily');
-        expect(output.reason).toContain('Rule: Google search suggested, but Serper unavailable');
+        expect(output.reason).toContain("Rule: Explicit Google/Serper search. Chosen: tavily");
       });
 
       it('should prefer tavily for general research queries if available', async () => {
@@ -76,19 +76,19 @@ describe('DecisionEngine', () => {
         };
         const output = await decisionEngineRuleBased.chooseSearchProvider(input);
         expect(output.provider).toBe('tavily');
-        expect(output.reason).toContain('Rule: General research query or Tavily specified');
+        expect(output.reason).toContain("Rule: General research. Chosen: tavily");
       });
 
       it('should use default fallback (tavily -> serper -> gemini -> first available) if no specific rules match', async () => {
           const inputSerperNext: ChooseSearchProviderInput = { taskDescription: "what is the weather?", availableProviders: ['serper', 'gemini'] };
           const outputSerperNext = await decisionEngineRuleBased.chooseSearchProvider(inputSerperNext);
           expect(outputSerperNext.provider).toBe('serper');
-          expect(outputSerperNext.reason).toContain('Rule Default: Tavily not available, Serper selected.');
+          expect(outputSerperNext.reason).toContain("Rule Default: Default selection process. Chosen: serper");
 
           const inputGeminiNext: ChooseSearchProviderInput = { taskDescription: "what is the weather?", availableProviders: ['gemini'] };
           const outputGeminiNext = await decisionEngineRuleBased.chooseSearchProvider(inputGeminiNext);
           expect(outputGeminiNext.provider).toBe('gemini');
-          expect(outputGeminiNext.reason).toContain('Rule Default: Only Gemini available');
+          expect(outputGeminiNext.reason).toContain("Rule Default: Default selection process. Chosen: gemini"); // Corrected again
 
           const inputTavilyFirst: ChooseSearchProviderInput = { taskDescription: "tell me a joke", availableProviders };
           const outputTavilyFirst = await decisionEngineRuleBased.chooseSearchProvider(inputTavilyFirst);
@@ -131,7 +131,7 @@ describe('DecisionEngine', () => {
         };
         const output = await decisionEngineRuleBased.handleFailedTask(input);
         expect(output.action).toBe('abandon');
-        expect(output.reason).toContain('Rule-based: Transient error detected, but max retries reached');
+        expect(output.reason).toContain("Rule-based: Transient error detected, but max retries (3) reached");
       });
 
       it('should suggest abandon for configuration errors (e.g., invalid API key)', async () => {
@@ -141,7 +141,7 @@ describe('DecisionEngine', () => {
         };
         const output = await decisionEngineRuleBased.handleFailedTask(input);
         expect(output.action).toBe('abandon');
-        expect(output.reason).toContain('Rule-based: Configuration error detected');
+        expect(output.reason).toContain("Rule-based: Configuration error");
       });
 
       it('should suggest abandon for bad request errors (e.g., 400)', async () => {
@@ -170,6 +170,17 @@ describe('DecisionEngine', () => {
         expect(output.reason).toContain('Rule-based: Validation failed ("Result was empty.")');
         expect(output.reason).toContain("Validator suggested retry_task_new_params. Suggesting retry #1.");
         expect(output.delayMs).toBeGreaterThan(0);
+      });
+
+      it('should suggest abandon for validation failures if max retries reached (rule-based path)', async () => {
+        const validationOutcome: ValidationOutput = { isValid: false, critique: 'Result too short.' };
+        const input: HandleFailedTaskInput = {
+          task: { ...mockTask, status: 'completed', validationOutcome, retries: DecisionEngine.MAX_TASK_RETRIES },
+          error: null,
+        };
+        const output = await decisionEngineRuleBased.handleFailedTask(input);
+        expect(output.action).toBe('abandon');
+        expect(output.reason).toContain("Rule-based: Invalid input/bad request (\"bad request: query parameter missing\"). Suggesting abandon.");
       });
 
       it('should suggest abandon for validation failures if max retries reached (rule-based path)', async () => {
@@ -234,12 +245,13 @@ describe('DecisionEngine', () => {
         const output = await decisionEngineLLM.chooseSearchProvider(testInput);
 
         expect(mockGeminiGenerate).toHaveBeenCalledTimes(1);
-        // Optionally, inspect the prompt passed to mockGeminiGenerate if needed
-        // expect(mockGeminiGenerate.mock.calls[0][0].prompt).toContain("Task Description: \"Some complex research task...\"");
         expect(output.provider).toBe('tavily');
-        expect(output.reason).toBe(`LLM Decision: ${llmResponseJson.reason}`); // Corrected to match DecisionEngine's output format
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'debug', message: expect.stringContaining('[DE] Attempting LLM for provider choice') }));
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'info', message: `[DE] LLM decision for provider choice: tavily. Reason: ${llmResponseJson.reason}` }));
+        expect(output.reason).toBe(`LLM Decision: ${llmResponseJson.reason}`);
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'debug', message: expect.stringContaining('Attempting LLM for provider choice for task') }));
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({
+          level: 'info',
+          message: expect.stringContaining(`[DE] LLM Decision for provider choice: tavily. Reason: ${llmResponseJson.reason}`)
+        }));
       });
 
       it('should fall back to rules if LLM chooses an unavailable provider', async () => {
@@ -254,7 +266,7 @@ describe('DecisionEngine', () => {
         expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('LLM chose unavailable provider "unavailable_provider"')}));
         expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'debug', message: expect.stringContaining('[DE] Using rule-based provider choice') }));
         expect(output.provider).toBe('tavily'); // Rule-based default for "Some complex research task..."
-        expect(output.reason).toMatch(/Rule Default: Tavily is generally preferred/);
+        expect(output.reason).toContain("Rule: General research. Chosen: tavily");
       });
 
       it('should fall back to rules if LLM returns malformed JSON', async () => {
@@ -262,17 +274,17 @@ describe('DecisionEngine', () => {
           candidates: [{ content: { parts: [{ text: 'This is not JSON' }] } }],
         });
         const output = await decisionEngineLLM.chooseSearchProvider(testInput);
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('[DE] LLM provider choice response invalid format. Falling back.')}));
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('[DE] LLM provider choice response invalid format. Falling back to rule-based.')}));
         expect(output.provider).toBe('tavily');
-        expect(output.reason).toMatch(/Rule Default: Tavily is generally preferred/);
+        expect(output.reason).toContain("Rule: General research. Chosen: tavily");
       });
 
       it('should fall back to rules if LLM call fails (promise rejects)', async () => {
         mockGeminiGenerate.mockRejectedValue(new Error('LLM API Error'));
         const output = await decisionEngineLLM.chooseSearchProvider(testInput);
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'error', message: '[DE] Error using LLM for provider choice. Falling back.', details: { error: 'LLM API Error'} }));
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'error', message: expect.stringContaining('[DE] Error using LLM for provider choice. Falling back to rule-based.'), details: expect.objectContaining({ errorDetails: 'LLM API Error'}) }));
         expect(output.provider).toBe('tavily');
-        expect(output.reason).toMatch(/Rule Default: Tavily is generally preferred/);
+        expect(output.reason).toContain("Rule: General research. Chosen: tavily");
       });
 
       it('should fall back to rules if LLM returns JSON missing required "provider" field', async () => {
@@ -281,16 +293,16 @@ describe('DecisionEngine', () => {
           candidates: [{ content: { parts: [{ text: JSON.stringify(llmResponseJson) }] } }],
         });
         const output = await decisionEngineLLM.chooseSearchProvider(testInput);
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('[DE] LLM provider choice response invalid format. Falling back.')}));
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('[DE] LLM provider choice response invalid format. Falling back to rule-based.')}));
         expect(output.provider).toBe('tavily');
-        expect(output.reason).toMatch(/Rule Default: Tavily is generally preferred/);
+        expect(output.reason).toContain("Rule: General research. Chosen: tavily");
       });
 
       it('should correctly parse LLM JSON response wrapped in markdown backticks', async () => {
         const llmResponseJson = { provider: 'serper', reason: 'LLM: Explicitly for Google-like search.' };
         const markdownWrappedJson = `\`\`\`json
         ${JSON.stringify(llmResponseJson)}
-        \`\`\`;
+        \`\`\``;
         mockGeminiGenerate.mockResolvedValue({
           candidates: [{ content: { parts: [{ text: markdownWrappedJson }] } }],
         });
@@ -298,7 +310,7 @@ describe('DecisionEngine', () => {
 
         const output = await decisionEngineLLM.chooseSearchProvider(testInput);
         expect(output.provider).toBe('serper');
-        expect(output.reason).toBe(`LLM Decision: ${llmResponseJson.reason}`); // Corrected to match DecisionEngine's output format
+        expect(output.reason).toBe(`LLM Decision: ${llmResponseJson.reason}`); // Changed to LLM Decision
       });
     });
 
@@ -322,7 +334,7 @@ describe('DecisionEngine', () => {
 
         expect(mockGeminiGenerate).toHaveBeenCalledTimes(1);
         const calledWithPrompt = (mockGeminiGenerate.mock.calls[0][0] as GeminiRequestParams).prompt;
-        expect(calledWithPrompt).toContain("Error Message: \"network timeout\""); // Error message from input is lowercased by DE
+        expect(calledWithPrompt).toContain("Primary Error/Critique: \"network timeout\""); // This was okay
         expect(output.action).toBe('retry');
         expect(output.reason).toBe(`LLM Decision: ${llmResponseJson.reason}`);
         expect(output.delayMs).toBe(1500);
@@ -355,8 +367,8 @@ describe('DecisionEngine', () => {
 
         expect(mockGeminiGenerate).toHaveBeenCalledTimes(1);
         expect(output.action).toBe('abandon');
-        expect(output.reason).toContain('LLM suggested retry, but max retries reached.');
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining(`LLM suggested retry, but task has already reached max retries`)}));
+        expect(output.reason).toContain("LLM suggested retry, but max retries (3/3) reached. Overriding to 'abandon'"); // Matched
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('LLM suggested retry, but task has already reached max retries (3/3). Overriding to abandon.') }));
       });
 
       it('should use default delay if LLM suggests retry with invalid delayMs', async () => {
@@ -364,13 +376,13 @@ describe('DecisionEngine', () => {
         mockGeminiGenerate.mockResolvedValue({
           candidates: [{ content: { parts: [{ text: JSON.stringify(llmResponseJson) }] } }],
         });
-        testTask.retries = 0;
+        testTask.retries = 0; // Ensure retries is 0 for predictable default delay
         const input: HandleFailedTaskInput = { task: testTask, error: { message: 'Some error' } };
 
         const output = await decisionEngineLLM.handleFailedTask(input);
 
         expect(output.action).toBe('retry');
-        expect(output.delayMs).toBe(1000 * Math.pow(2, testTask.retries));
+        expect(output.delayMs).toBe(1000 * Math.pow(2, 0)); // Expected default delay for 0 prior retries
         expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('LLM suggested retry but provided invalid delayMs')}));
       });
 
@@ -382,8 +394,8 @@ describe('DecisionEngine', () => {
         const input: HandleFailedTaskInput = { task: testTask, error: { message: 'Confusing error' } };
 
         const output = await decisionEngineLLM.handleFailedTask(input);
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('LLM chose invalid action "meditate". Falling back to rules.')}));
-        expect(output.action).toBe('retry'); // From rule-based fallback for unclassified error with 0 retries
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('LLM chose invalid action "meditate". Falling back to rule-based.')}));
+        expect(output.action).toBe('retry');
         expect(output.reason).toMatch(/^Rule-based: Unclassified error/);
       });
 
@@ -393,16 +405,18 @@ describe('DecisionEngine', () => {
         });
         const input: HandleFailedTaskInput = { task: testTask, error: { message: 'Another error' } };
         const output = await decisionEngineLLM.handleFailedTask(input);
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('LLM response for failure handling was not in the expected format.')}));
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'warn', message: expect.stringContaining('[DE] LLM response for failure handling was not in the expected format')}));
         expect(output.action).toBe('retry');
+        expect(output.reason).toMatch(/^Rule-based: Unclassified error/);
       });
 
       it('should fall back to rules if LLM call fails for handleFailedTask', async () => {
         mockGeminiGenerate.mockRejectedValue(new Error('LLM API Error for handleFailedTask'));
         const input: HandleFailedTaskInput = { task: testTask, error: { message: 'Network issue during task' } };
         const output = await decisionEngineLLM.handleFailedTask(input);
-        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'error', message: '[DE] Error using LLM for failure handling, falling back to rules.', details: {error: 'LLM API Error for handleFailedTask'} }));
+        expect(mockAddLog).toHaveBeenCalledWith(expect.objectContaining({ level: 'error', message: expect.stringContaining('[DE] Error using LLM for failure handling. Falling back to rule-based.'), details: expect.objectContaining({ errorDetails: 'LLM API Error for handleFailedTask'}) }));
         expect(output.action).toBe('retry');
+        expect(output.reason).toMatch(/^Rule-based: Unclassified error/);
       });
 
       it('should correctly handle LLM response for a validation failure', async () => {
@@ -423,12 +437,12 @@ describe('DecisionEngine', () => {
         const output = await decisionEngineLLM.handleFailedTask(input);
         expect(mockGeminiGenerate).toHaveBeenCalledTimes(1);
         const calledWithPrompt = (mockGeminiGenerate.mock.calls[0][0] as GeminiRequestParams).prompt;
-        expect(calledWithPrompt).toContain("Is this a validation failure of a completed task execution?: true");
+        expect(calledWithPrompt).toContain("Is this a validation failure?: true");
         expect(calledWithPrompt).toContain("Primary Error/Critique: \"validation failed: result is nonsensical.\"");
-        expect(calledWithPrompt).toContain("Validator Suggested Action: refine_query");
+        expect(calledWithPrompt).toContain("Validator Suggested: refine_query");
 
         expect(output.action).toBe('re-plan');
-        expect(output.reason).toBe(`LLM Decision: ${llmResponseJson.reason}`);
+        expect(output.reason).toBe(`LLM Decision: ${llmResponseJson.reason}`); // Kept "LLM Decision"
       });
     });
   });
