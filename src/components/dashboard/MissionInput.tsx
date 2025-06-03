@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAgentStore } from '@/lib/agent/StateManager';
 import { Mission, Task } from '@/lib/types/agent'; // Make sure Task is imported if used in Mission type display
+import { useAgent } from '@/hooks/useAgent';
 
 // Placeholder Button and Input components
 // TODO: Replace these with actual components from src/components/ui/ when they are implemented
@@ -39,6 +40,7 @@ export function MissionInput() {
   // Access store state if needed, e.g., to display global errors or loading state
   const agentErrorGlobal = useAgentStore((state) => state.agentState.error);
   const globalIsLoading = useAgentStore((state) => state.agentState.isLoading); // Example of accessing global loading
+  const { setCurrentMissionId } = useAgent();
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -71,6 +73,7 @@ export function MissionInput() {
       // The API route itself calls createMission on the store.
       // The client-side store will not automatically update unless we implement a mechanism for it (e.g., re-fetching, websockets, or manual update).
       // For now, we just log it and show a success message with ID.
+      setCurrentMissionId((data as Mission).id);
       console.log('Mission creation request successful:', data);
       setLastCreatedId((data as Mission).id);
       setMissionGoal('');
