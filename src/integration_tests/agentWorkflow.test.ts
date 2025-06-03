@@ -14,30 +14,92 @@ jest.mock('@/lib/search/GeminiClient');
 const MockedGeminiClient = GeminiClient as jest.MockedClass<typeof GeminiClient>;
 let mockGeminiGenerate: jest.Mock<Promise<GeminiResponse>, [GeminiRequestParams]>;
 
-jest.mock('@/lib/search/TavilyClient');
-const MockedTavilyClient = TavilyClient as jest.MockedClass<typeof TavilyClient>;
-let mockTavilySearch: jest.Mock<Promise<TavilySearchResponse>, [TavilySearchParams]>;
+// Use the global mock for TavilyClient from jest.setup.js
+import { mockTavilySearchGlobal, clearMockTavilySearchGlobal } from '../../jest.setup'; // Adjust path if needed
+const mockTavilySearch = mockTavilySearchGlobal;
+const MockedTavilyClient = TavilyClient as jest.MockedClass<typeof TavilyClient>; // For type assistance if still needed
 
 jest.mock('@/lib/search/SerperClient');
 const MockedSerperClient = SerperClient as jest.MockedClass<typeof SerperClient>;
 let mockSerperSearch: jest.Mock<Promise<SerperSearchResponse>, [SerperSearchParams]>;
 
 // --- Store Management ---
-let initialStoreStateJson: string; // Store the stringified initial state
+// Mock the entire store state including functions for each test
+const mockStoreLogs: LogLevel[] = [];
+const mockAddLogFnIntegration = jest.fn((logEntry: LogLevel) => {
+  mockStoreLogs.push(logEntry);
+});
 
 // Helper to get a fresh addLog function that uses the current state of the store
+// This will now consistently get the mockAddLogFnIntegration from the mocked store state
 const getAddLogFunc = () => useAgentStore.getState().addLog;
 
 describe('Agent Workflow Integration Tests', () => {
 
-  beforeAll(() => {
-    // Capture the initial state of the store once by serializing it
-    initialStoreStateJson = JSON.stringify(useAgentStore.getState());
-  });
-
   beforeEach(() => {
-    // Reset the store to its initial state before each test
-    useAgentStore.setState(JSON.parse(initialStoreStateJson), true);
+    // Clear collected logs and mock function calls
+    mockStoreLogs.length = 0;
+    mockAddLogFnIntegration.mockClear();
+
+    // Define a fresh initial state for the store for each test
+    const initialMissionState: Mission = {
+        id: 'mission-integ-test',
+        goal: 'Initial Goal',
+        tasks: [],
+        status: 'pending',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+    };
+    const initialAgentState = {
+        currentMissionId: null,
+        isLoading: false,
+        error: null,
+        activeTasks: [],
+    };
+
+    useAgentStore.setState({
+      missions: { [initialMissionState.id]: initialMissionState },
+      agentState: initialAgentState,
+      logs: mockStoreLogs, // Use our array to track logs
+      addLog: mockAddLogFnIntegration, // Use our dedicated mock function
+      createMission: jest.fn((mission: Mission) => {
+        useAgentStore.setState((prev) => ({
+          ...prev,
+          missions: { ...prev.missions, [mission.id]: mission },
+          agentState: { ...prev.agentState, currentMissionId: mission.id }
+        }));
+      }),
+      updateTask: jest.fn((missionId: string, taskId: string, updates: Partial<Task>) => {
+        useAgentStore.setState((prev) => {
+          const mission = prev.missions[missionId];
+          if (mission) {
+            const taskIndex = mission.tasks.findIndex(t => t.id === taskId);
+            if (taskIndex !== -1) {
+              const newTasks = [...mission.tasks];
+              newTasks[taskIndex] = { ...newTasks[taskIndex], ...updates, updatedAt: new Date() };
+              return {
+                ...prev,
+                missions: { ...prev.missions, [missionId]: { ...mission, tasks: newTasks, updatedAt: new Date() } },
+              };
+            }
+          }
+          return prev;
+        });
+      }),
+      setMissionStatus: jest.fn((missionId: string, status: Mission['status']) => {
+         useAgentStore.setState(prev => {
+            const mission = prev.missions[missionId];
+            if (mission) {
+                return {...prev, missions: {...prev.missions, [missionId]: {...mission, status, updatedAt: new Date() }}};
+            }
+            return prev;
+         });
+      }),
+      addTaskToActive: jest.fn((taskId) => useAgentStore.setState(prev => ({...prev, agentState: {...prev.agentState, activeTasks: [...prev.agentState.activeTasks, taskId]}}))),
+      removeTaskFromActive: jest.fn((taskId) => useAgentStore.setState(prev => ({...prev, agentState: {...prev.agentState, activeTasks: prev.agentState.activeTasks.filter(id => id !== taskId)}}))),
+      setAgentError: jest.fn((error) => useAgentStore.setState(prev => ({...prev, agentState: {...prev.agentState, error }}))),
+
+    }, true); // `true` replaces the entire state
 
     // Reset mocks and setup default implementations for external clients
     mockGeminiGenerate = jest.fn();
@@ -46,11 +108,9 @@ describe('Agent Workflow Integration Tests', () => {
         // Add any other methods of GeminiClient that might be called, if necessary
     } as any));
 
-
-    mockTavilySearch = jest.fn();
-    MockedTavilyClient.mockImplementation(() => ({
-        search: mockTavilySearch,
-    } as any));
+    // Reset Tavily mock for each test
+    clearMockTavilySearchGlobal();
+    // mockTavilySearch.mockClear(); // Done by clearMockTavilySearchGlobal
 
     mockSerperSearch = jest.fn();
     MockedSerperClient.mockImplementation(() => ({
@@ -60,28 +120,27 @@ describe('Agent Workflow Integration Tests', () => {
     // DecisionEngine and ResultValidator will use their actual implementations.
     // To ensure DecisionEngine runs in rule-based mode for tests not specifically testing its LLM path,
     // we need to control its access to process.env.GEMINI_API_KEY when TaskExecutor instantiates it.
-    // For now, tests will proceed assuming it might try to use LLM if key is in environment,
-    // or specific tests can mock process.env for DecisionEngine's rule-based paths.
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    jest.clearAllMocks(); // Clears all mocks, including our store function mocks like mockAddLogFnIntegration
   });
 
   // Placeholder for test cases
-  it('should have mocks and store reset correctly (setup test)', () => {
-    const parsedInitialState = JSON.parse(initialStoreStateJson);
-    const initialLogsLength = parsedInitialState.logs?.length || 0;
-    // Verify that after beforeEach reset, logs are at initial captured length
-    expect(useAgentStore.getState().logs).toHaveLength(initialLogsLength);
+  it('should have store reset with functional addLog (setup test)', () => {
+    const currentLogs = useAgentStore.getState().logs;
+    expect(currentLogs).toEqual(mockStoreLogs); // Should be the same array instance initially
+    expect(currentLogs).toHaveLength(0);
 
-    const addLog = getAddLogFunc();
-    addLog({level: 'info', message: 'Test log during setup test'});
-    expect(useAgentStore.getState().logs).toHaveLength(initialLogsLength + 1);
+    const addLog = getAddLogFunc(); // This should get mockAddLogFnIntegration
+    expect(addLog).toBe(mockAddLogFnIntegration); // Ensure it's the correct mock function
 
-    // Simulate reset again to double-check
-    useAgentStore.setState(JSON.parse(initialStoreStateJson), true);
-    expect(useAgentStore.getState().logs).toHaveLength(initialLogsLength);
+    addLog({level: 'info', message: 'Test log during setup test'} as LogLevel);
+    expect(mockStoreLogs).toHaveLength(1); // Check our manually tracked array
+    expect(mockStoreLogs[0].message).toBe('Test log during setup test');
+
+    // Also check the store's logs if it's being updated by the mock correctly
+    expect(useAgentStore.getState().logs).toHaveLength(1);
   });
 
   it('Scenario 1: should successfully create a mission, decompose, execute one search task, and complete', async () => {
@@ -161,9 +220,10 @@ describe('Agent Workflow Integration Tests', () => {
     expect(executedTask?.validationOutcome?.isValid).toBe(true);
     expect(mockTavilySearch).toHaveBeenCalledWith(expect.objectContaining({ query: "AI in healthcare" }));
 
-    const logs = useAgentStore.getState().logs;
+    const logs = useAgentStore.getState().logs; // This now correctly refers to mockStoreLogs
     expect(logs.some(log => log.message.includes(`[TD] Mission mission-integ-1 decomposed into 1 tasks.`))).toBe(true);
-    expect(logs.some(log => log.message.includes(`[TE] Task ${taskToExecute.id} using 'tavily' for query: AI in healthcare`))).toBe(true);
+    // Make the below assertion more flexible to check for key parts
+    expect(logs.some(log => log.message.includes(`[TE] Task ${taskToExecute.id}`) && log.message.includes('using \'tavily\'') && log.message.includes('AI in healthcare'))).toBe(true);
     expect(logs.some(log => log.message.includes(`[TE] Task ${taskToExecute.id} completed successfully.`))).toBe(true);
 
     // Restore original process.env

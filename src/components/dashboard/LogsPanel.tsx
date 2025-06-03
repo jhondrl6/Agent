@@ -24,7 +24,7 @@ export function LogsPanel() {
       {logs.length === 0 ? (
         <p className="text-gray-500 italic text-center py-10">No log entries yet. Start a mission to see logs.</p>
       ) : (
-        <div className="overflow-y-auto flex-grow pr-2 space-y-2 text-sm font-mono custom-scrollbar"> {/* Adjusted space-y */}
+        <div data-testid="logs-container" className="overflow-y-auto flex-grow pr-2 space-y-2 text-sm font-mono custom-scrollbar"> {/* Adjusted space-y */}
            {/* Invisible div at the top for auto-scrolling to newest log */}
           <div ref={logsEndRef} />
           {logs.map((log) => (

@@ -1,5 +1,5 @@
 // src/lib/search/TavilyClient.ts
-import Tavily from 'tavily-js'; // The Tavily SDK
+import Tavily from 'tavily'; // The Tavily SDK
 import { TavilySearchParams, TavilySearchResponse, TavilySearchResultItem } from '@/lib/types/search';
 
 export class TavilyClient {

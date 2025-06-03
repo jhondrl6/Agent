@@ -88,14 +88,11 @@ describe('LogsPanel Component', () => {
         missions: {},
     }));
     render(<LogsPanel />);
-    const listContainer = screen.getByRole('list'); // Assuming the <ul> or parent div of items has a role="list" or is identifiable
-    // The current LogsPanel uses a div with "overflow-y-auto"
-    // Let's try to get it by class or add a test-id to it.
-    // For now, check for one of the list items being present as a proxy for the container.
-    expect(screen.getByTestId('log-item-log1')).toBeInTheDocument();
-    // A better test would be to check the styles of the container if possible, or its structure.
-    // The current structure in LogsPanel.tsx is: <div className="overflow-y-auto ..."> {logs.map(...)} </div>
-    // We can't easily query by specific Tailwind classes with RTL directly unless combined with test-id.
+    const logsContainer = screen.getByTestId('logs-container');
+    expect(logsContainer).toBeInTheDocument();
+    expect(logsContainer).toHaveClass('overflow-y-auto');
+    // Ensure items are rendered within this container as a basic check
+    expect(within(logsContainer).getByTestId(`log-item-${mockLogs[0].id}`)).toBeInTheDocument();
   });
 
 });
