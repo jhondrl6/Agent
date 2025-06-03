@@ -46,7 +46,14 @@ export class TaskExecutor {
 
     try {
       addTaskToActive(task.id);
-      updateTask(missionId, task.id, { status: 'in-progress', failureDetails: undefined, validationOutcome: undefined }); 
+      // Update task status to 'in-progress' and clear fields from previous attempts
+      updateTask(missionId, task.id, { 
+        status: 'in-progress', 
+        // updatedAt will be set by updateTask
+        result: undefined,             // Explicitly clear
+        failureDetails: undefined,     // Explicitly clear
+        validationOutcome: undefined   // Explicitly clear
+      }); 
 
       const descriptionLower = task.description.toLowerCase();
       const searchKeywords = ["search for", "find information on", "find information about", "research", "look up", "investigate", "google search for", "serper search for", "tavily search for"];

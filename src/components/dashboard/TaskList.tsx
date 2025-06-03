@@ -3,18 +3,19 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAgentStore } from '@/lib/agent/StateManager';
-import { Mission, Task } from '@/lib/types/agent';
+import { Mission, Task, LogLevel } from '@/lib/types/agent'; // Added LogLevel
 import { TaskExecutor } from '@/lib/agent/TaskExecutor';
-import { Modal } from '@/components/ui/modal'; // Import Modal
+import { Modal } from '@/components/ui/modal'; 
+import { DecisionEngine } from '@/lib/agent/DecisionEngine'; // For MAX_TASK_RETRIES
 
 export function TaskList() {
   const currentMissionId = useAgentStore((state) => state.agentState.currentMissionId);
   const mission = useAgentStore((state) => 
     state.agentState.currentMissionId ? state.missions[state.agentState.currentMissionId] : null
   );
-  // Subscribe to global loading state, e.g., if TaskExecutor sets it.
   const agentIsGloballyLoading = useAgentStore((state) => state.agentState.isLoading);
   const activeTasksGlobalCount = useAgentStore((state) => state.agentState.activeTasks.length);
+  const { addLog, manualCompleteTask, manualFailTask, updateTask } = useAgentStore.getState(); // Get actions
 
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -28,72 +29,111 @@ export function TaskList() {
     setSelectedTask(null);
   };
 
-  // No local 'areTasksExecuting' state or useEffect for it anymore
+  const handleManualComplete = () => {
+    if (!selectedTask || !mission) return;
+    const manualResultText = prompt("Optional: Enter a brief result or reason for manual completion:", "Manually completed via UI.");
+    if (manualResultText === null) return; 
+
+    manualCompleteTask(mission.id, selectedTask.id, manualResultText || "Manually completed via UI.");
+    addLog({ level: 'system', message: `[UI] Task ${selectedTask.id} manually marked COMPLETED.`, details: { missionId: mission.id, taskId: selectedTask.id, manualResult: manualResultText } });
+    closeModal();
+  };
+
+  const handleManualFail = () => {
+    if (!selectedTask || !mission) return;
+    const manualFailureReason = prompt("Enter a reason for manually failing this task:", "Manually failed via UI.");
+    if (manualFailureReason === null) return; 
+
+    manualFailTask(mission.id, selectedTask.id, manualFailureReason || "Manually failed via UI.");
+    addLog({ level: 'system', message: `[UI] Task ${selectedTask.id} manually marked FAILED.`, details: { missionId: mission.id, taskId: selectedTask.id, reason: manualFailureReason } });
+    closeModal();
+  };
+
+  const handleForceRetry = async () => {
+    if (!selectedTask || !mission) return;
+
+    addLog({ level: 'system', message: `[UI] Force retry triggered for task ${selectedTask.id}.`, details: { missionId: mission.id, taskId: selectedTask.id } });
+    
+    const executor = new TaskExecutor(addLog); 
+    
+    const taskToRetry: Task = {
+      ...selectedTask,
+      status: 'pending',
+      // Retain current retries. DecisionEngine will use this value if it fails again.
+      result: undefined,
+      failureDetails: undefined,
+      validationOutcome: undefined,
+      updatedAt: new Date(), 
+    };
+
+    // Update task in store to 'pending' to reflect it's being re-queued.
+    updateTask(mission.id, selectedTask.id, { 
+      status: 'pending', 
+      retries: taskToRetry.retries, 
+      result: undefined, 
+      failureDetails: undefined, 
+      validationOutcome: undefined, 
+      updatedAt: new Date() 
+    });
+    
+    closeModal(); 
+
+    try {
+      // Execute the task. Do not await here if you want the UI to be responsive immediately.
+      // The UI will update reactively based on store changes from TaskExecutor.
+      executor.executeTask(mission.id, taskToRetry)
+        .then(() => {
+          addLog({ level: 'info', message: `[UI] Forced retry for task ${taskToRetry.id} initiated and has run its course (check logs for outcome).` });
+        })
+        .catch(err => {
+          addLog({ level: 'error', message: `[UI] Error during forced retry execution for task ${taskToRetry.id}.`, details: { error: (err as Error).message } });
+        });
+    } catch (err: any) { // Catch potential synchronous error from executeTask call itself, though unlikely.
+      addLog({ level: 'error', message: `[UI] Error initiating forced retry for task ${taskToRetry.id}.`, details: { error: err.message } });
+    }
+  };
 
   const handleExecutePendingTasks = async () => {
     if (!mission || !mission.tasks) return;
-
     const pendingTasks = mission.tasks.filter(task => task.status === 'pending');
-
     if (pendingTasks.length === 0) {
-      alert("No pending tasks to run for this mission."); // Consider a more integrated notification
+      alert("No pending tasks to run for this mission."); 
       return;
     }
 
-    // setAreTasksExecuting(true); // REMOVED - global isLoading will be set by TaskExecutor via StateManager
-    console.log(`[TaskList] Triggering execution for ${pendingTasks.length} pending tasks for mission ${mission.id}.`);
-    
-    const addLog = useAgentStore.getState().addLog;
-    const executor = new TaskExecutor(addLog); // Instantiate once for this batch with addLog
-    
-    // Create an array of promises. executeTask is async but we don't await each one here.
+    addLog({ level: 'system', message: `[UI] Triggering execution for ${pendingTasks.length} pending tasks for mission ${mission.id}.`});
+    const executor = new TaskExecutor(addLog); 
     const taskPromises = pendingTasks.map(task => 
       executor.executeTask(mission.id, task)
         .catch(err => { 
-          // This catch is for unexpected errors *before* executeTask's own try/catch handles it.
-          // executeTask is designed to always handle its errors and update the store.
-          // So, a rejection here would be highly unusual unless executeTask itself throws before its try block.
-          console.error(`[TaskList] Critical error from executeTask promise for ${task.id} (this indicates an issue in executeTask's error handling):`, err);
-          // Return a specific shape to identify failure if needed by Promise.allSettled's results,
-          // though executeTask should prevent this by design.
+          console.error(`[TaskList] Critical error from executeTask promise for ${task.id}:`, err);
+          addLog({level: 'error', message: `[TaskList] Critical error from executeTask promise for ${task.id}`, details: { error: (err as Error).message }});
           return { status: 'rejected', reason: err, taskId: task.id }; 
         })
     );
-
     try {
       const results = await Promise.allSettled(taskPromises);
-      console.log('[TaskList] All triggered task promises have settled. Results:', results);
-      
-      // Optionally, iterate through results to log successes/failures specific to this batch run
-      // This can be useful for debugging the Promise.allSettled part itself.
+      addLog({level: 'debug', message: `[TaskList] All triggered task promises for mission ${mission.id} have settled.`, details: {resultsCount: results.length}});
       results.forEach((result, index) => {
-        const task = pendingTasks[index]; // Assuming order is preserved
+        const task = pendingTasks[index]; 
         if (result.status === 'fulfilled') {
-          // Fulfillment here means executeTask completed its own logic (which includes updating the store for success/failure).
-          // It does NOT mean the task *succeeded*.
-          console.log(`[TaskList] executeTask for ${task.id} ("${task.description.substring(0,50)}...") completed its execution run (check store for actual success/failure).`);
+          // Logged by TaskExecutor
         } else {
-          // This means the promise returned by executor.executeTask was rejected.
-          // This should be rare if executeTask's internal try/catch is robust.
-          console.error(`[TaskList] Promise for task ${task.id} ("${task.description.substring(0,50)}...") was rejected:`, result.reason);
+          addLog({level: 'error', message:`[TaskList] Task ${task.id} promise was rejected:`, details: {reason: result.reason}});
         }
       });
-
-    } catch (error) {
-      // This catch is for errors in Promise.allSettled itself, which is highly unlikely.
-      console.error("[TaskList] Error during Promise.allSettled execution:", error);
-    } finally {
-      // setAreTasksExecuting(false); // REMOVED - global isLoading will be managed by StateManager
+    } catch (error: any) {
+      addLog({level: 'error', message:"[TaskList] Error during Promise.allSettled execution:", details: {error: error.message}});
     }
   };
   
-  const getStatusPillClasses = (status: Task['status']) => { // Keep this function as it's used below
+  const getStatusPillClasses = (status: Task['status']) => {
     switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300'; // Adjusted for light theme
+      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
       case 'in-progress': return 'bg-blue-100 text-blue-800 border-blue-300';
       case 'completed': return 'bg-green-100 text-green-800 border-green-300';
       case 'failed': return 'bg-red-100 text-red-800 border-red-300';
-      case 'retrying': return 'bg-orange-100 text-orange-800 border-orange-300'; // Ensure this matches your desired style for orange
+      case 'retrying': return 'bg-orange-100 text-orange-800 border-orange-300'; 
       default: return 'bg-gray-100 text-gray-800 border-gray-300';
     }
   };
@@ -119,11 +159,11 @@ export function TaskList() {
         </div>
         <button
           onClick={handleExecutePendingTasks}
-          disabled={agentIsGloballyLoading || !hasPendingTasks} // Use global loading state
+          disabled={agentIsGloballyLoading || !hasPendingTasks} 
           className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center transition-colors duration-150 ease-in-out mt-3 sm:mt-0 w-full sm:w-auto"
           title={!hasPendingTasks ? "No pending tasks available" : agentIsGloballyLoading ? "Tasks are currently executing" : "Run all pending tasks"}
         >
-          {agentIsGloballyLoading && activeTasksGlobalCount > 0 && ( // Show spinner if globally loading and tasks are active
+          {agentIsGloballyLoading && activeTasksGlobalCount > 0 && ( 
             <svg className="animate-spin -ml-1 mr-2 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
           )}
           {agentIsGloballyLoading && activeTasksGlobalCount > 0 ? `Executing (${activeTasksGlobalCount} Active)...` : 'Run All Pending Tasks'}
@@ -158,8 +198,7 @@ export function TaskList() {
                 <span className="text-gray-300">|</span>
                 <span>Retries: <span className="font-semibold text-gray-700">{task.retries}</span></span>
               </div>
-              {/* Minimal result preview, full result in modal */}
-              {task.result && (
+              {task.result && !task.failureDetails && task.status === 'completed' && (
                   <div className="mt-1 text-xs text-gray-500">
                       <strong>Result Preview: </strong> 
                       <span className="italic text-gray-600">{String(task.result).substring(0,100)}{String(task.result).length > 100 ? '...' : ''}</span>
@@ -170,12 +209,12 @@ export function TaskList() {
                </div>
                {task.status === 'failed' && task.failureDetails && (
                 <div className="mt-2 p-1.5 rounded bg-red-50 border border-red-200 text-red-600 text-xs">
-                  <p className="font-medium truncate">Failed: {task.failureDetails.reason.substring(0,100)}...</p>
+                  <p className="font-medium truncate" title={task.failureDetails.reason}>Failed: {task.failureDetails.reason.substring(0,100)}...</p>
                 </div>
               )}
-               {task.validationOutcome && !task.validationOutcome.isValid && (
+               {task.validationOutcome && !task.validationOutcome.isValid && task.status !== 'failed' && ( // Show validation warnings if not already failed
                  <div className="mt-2 p-1.5 rounded bg-yellow-50 border border-yellow-300 text-yellow-700 text-xs">
-                   <p className="font-medium truncate">Validation: {task.validationOutcome.critique?.substring(0,100)}...</p>
+                   <p className="font-medium truncate" title={task.validationOutcome.critique}>Validation: {task.validationOutcome.critique?.substring(0,100)}...</p>
                  </div>
                )}
             </li>
@@ -190,7 +229,7 @@ export function TaskList() {
             <strong className="text-gray-500 block mb-0.5">Full Description:</strong>
             <p className="whitespace-pre-wrap bg-gray-50 p-2 border rounded">{selectedTask.description}</p>
           </div>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
             <div><strong className="text-gray-500">Status:</strong>
               <span className={`ml-2 px-2 py-0.5 text-xs font-semibold rounded-full border ${getStatusPillClasses(selectedTask.status)}`}>
                 {selectedTask.status.toUpperCase()}
@@ -211,8 +250,8 @@ export function TaskList() {
           )}
 
           {selectedTask.validationOutcome && (
-            <div className={`p-3 rounded border ${selectedTask.validationOutcome.isValid ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-300'}`}>
-              <strong className="text-gray-500 block mb-1">Validation Outcome:</strong>
+            <div className={`p-3 rounded border ${selectedTask.validationOutcome.isValid ? 'bg-green-50 border-green-200 text-green-800' : 'bg-yellow-50 border-yellow-300 text-yellow-800'}`}>
+              <strong className="text-gray-600 block mb-1">Validation Outcome:</strong>
               <div className="space-y-1">
                 <p><strong>Valid:</strong> {selectedTask.validationOutcome.isValid ? 'Yes' : 'No'}</p>
                 {selectedTask.validationOutcome.qualityScore !== undefined && <p><strong>Quality Score:</strong> {selectedTask.validationOutcome.qualityScore.toFixed(2)}</p>}
@@ -224,7 +263,7 @@ export function TaskList() {
 
           {selectedTask.failureDetails && (
             <div className="p-3 rounded bg-red-50 border border-red-200 text-red-700">
-              <strong className="text-gray-500 block mb-1">Failure Details:</strong>
+              <strong className="text-gray-600 block mb-1">Failure Details:</strong>
               <div className="space-y-1">
                 <p><strong>Reason:</strong> {selectedTask.failureDetails.reason}</p>
                 {selectedTask.failureDetails.suggestedAction && <p><strong>Engine Suggested Action:</strong> {selectedTask.failureDetails.suggestedAction}</p>}
@@ -233,13 +272,34 @@ export function TaskList() {
               </div>
             </div>
           )}
-          <div className="pt-3 mt-3 border-t border-gray-200 flex justify-end">
-             <button 
-                onClick={closeModal} 
-                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
-              >
-                Close
-              </button>
+          <div className="mt-6 pt-4 border-t border-gray-200 flex flex-wrap gap-3 justify-end">
+            <button
+              onClick={handleManualComplete}
+              disabled={selectedTask.status === 'completed'}
+              className="px-4 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:bg-gray-400 disabled:text-gray-700 disabled:cursor-not-allowed"
+            >
+              Mark Completed
+            </button>
+            <button
+              onClick={handleManualFail}
+              disabled={selectedTask.status === 'failed' && !!selectedTask.failureDetails?.reason.includes('Manually failed by user')}
+              className="px-4 py-2 text-sm font-medium rounded-md bg-red-600 text-white hover:bg-red-700 disabled:bg-gray-400 disabled:text-gray-700 disabled:cursor-not-allowed"
+            >
+              Mark Failed
+            </button>
+            <button
+              onClick={handleForceRetry}
+              disabled={selectedTask.status === 'in-progress' || selectedTask.status === 'retrying'} 
+              className="px-4 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-400 disabled:text-gray-700 disabled:cursor-not-allowed"
+            >
+              Force Retry
+            </button>
+            <button 
+              onClick={closeModal} 
+              className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors"
+            >
+              Close
+            </button>
           </div>
         </div>
       </Modal>
