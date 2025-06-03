@@ -3,10 +3,16 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAgentStore } from '@/lib/agent/StateManager';
-import { Mission, Task, LogLevel } from '@/lib/types/agent'; // Added LogLevel
+import { Mission, Task, LogLevel } from '@/lib/types/agent';
 import { TaskExecutor } from '@/lib/agent/TaskExecutor';
 import { Modal } from '@/components/ui/modal'; 
 import { DecisionEngine } from '@/lib/agent/DecisionEngine'; // For MAX_TASK_RETRIES
+import { TaskListItem } from './TaskListItem'; // Import TaskListItem
+// getStatusPillClasses will be used by the Modal section in this file.
+// TaskListItem will import it from utils.ts itself.
+// Alternatively, pass getStatusPillClasses as a prop to TaskListItem or Modal.
+import { getStatusPillClasses } from './utils';
+
 
 export function TaskList() {
   const currentMissionId = useAgentStore((state) => state.agentState.currentMissionId);
@@ -15,7 +21,7 @@ export function TaskList() {
   );
   const agentIsGloballyLoading = useAgentStore((state) => state.agentState.isLoading);
   const activeTasksGlobalCount = useAgentStore((state) => state.agentState.activeTasks.length);
-  const { addLog, manualCompleteTask, manualFailTask, updateTask } = useAgentStore.getState(); // Get actions
+  const { addLog, manualCompleteTask, manualFailTask, updateTask } = useAgentStore.getState();
 
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -51,56 +57,30 @@ export function TaskList() {
 
   const handleForceRetry = async () => {
     if (!selectedTask || !mission) return;
-
     addLog({ level: 'system', message: `[UI] Force retry triggered for task ${selectedTask.id}.`, details: { missionId: mission.id, taskId: selectedTask.id } });
-    
     const executor = new TaskExecutor(addLog); 
-    
     const taskToRetry: Task = {
-      ...selectedTask,
-      status: 'pending',
-      // Retain current retries. DecisionEngine will use this value if it fails again.
-      result: undefined,
-      failureDetails: undefined,
-      validationOutcome: undefined,
-      updatedAt: new Date(), 
+      ...selectedTask, status: 'pending', result: undefined, failureDetails: undefined,
+      validationOutcome: undefined, updatedAt: new Date(), 
     };
-
-    // Update task in store to 'pending' to reflect it's being re-queued.
     updateTask(mission.id, selectedTask.id, { 
-      status: 'pending', 
-      retries: taskToRetry.retries, 
-      result: undefined, 
-      failureDetails: undefined, 
-      validationOutcome: undefined, 
-      updatedAt: new Date() 
+      status: 'pending', retries: taskToRetry.retries, result: undefined, 
+      failureDetails: undefined, validationOutcome: undefined, updatedAt: new Date() 
     });
-    
     closeModal(); 
-
     try {
-      // Execute the task. Do not await here if you want the UI to be responsive immediately.
-      // The UI will update reactively based on store changes from TaskExecutor.
       executor.executeTask(mission.id, taskToRetry)
-        .then(() => {
-          addLog({ level: 'info', message: `[UI] Forced retry for task ${taskToRetry.id} initiated and has run its course (check logs for outcome).` });
-        })
-        .catch(err => {
-          addLog({ level: 'error', message: `[UI] Error during forced retry execution for task ${taskToRetry.id}.`, details: { error: (err as Error).message } });
-        });
-    } catch (err: any) { // Catch potential synchronous error from executeTask call itself, though unlikely.
-      addLog({ level: 'error', message: `[UI] Error initiating forced retry for task ${taskToRetry.id}.`, details: { error: err.message } });
-    }
+        .then(() => { addLog({ level: 'info', message: `[UI] Forced retry for task ${taskToRetry.id} initiated and has run its course.` }); })
+        .catch(err => { addLog({ level: 'error', message: `[UI] Error during forced retry for task ${taskToRetry.id}.`, details: { error: (err as Error).message } }); });
+    } catch (err: any) { addLog({ level: 'error', message: `[UI] Error initiating forced retry for ${taskToRetry.id}.`, details: { error: err.message } }); }
   };
 
   const handleExecutePendingTasks = async () => {
     if (!mission || !mission.tasks) return;
     const pendingTasks = mission.tasks.filter(task => task.status === 'pending');
     if (pendingTasks.length === 0) {
-      alert("No pending tasks to run for this mission."); 
-      return;
+      alert("No pending tasks to run."); return;
     }
-
     addLog({ level: 'system', message: `[UI] Triggering execution for ${pendingTasks.length} pending tasks for mission ${mission.id}.`});
     const executor = new TaskExecutor(addLog); 
     const taskPromises = pendingTasks.map(task => 
@@ -116,27 +96,17 @@ export function TaskList() {
       addLog({level: 'debug', message: `[TaskList] All triggered task promises for mission ${mission.id} have settled.`, details: {resultsCount: results.length}});
       results.forEach((result, index) => {
         const task = pendingTasks[index]; 
-        if (result.status === 'fulfilled') {
-          // Logged by TaskExecutor
-        } else {
-          addLog({level: 'error', message:`[TaskList] Task ${task.id} promise was rejected:`, details: {reason: result.reason}});
-        }
+        if (result.status === 'fulfilled') { /* Logged by TaskExecutor */ } 
+        else { addLog({level: 'error', message:`[TaskList] Task ${task.id} promise was rejected:`, details: {reason: result.reason}}); }
       });
     } catch (error: any) {
       addLog({level: 'error', message:"[TaskList] Error during Promise.allSettled execution:", details: {error: error.message}});
     }
   };
   
-  const getStatusPillClasses = (status: Task['status']) => {
-    switch (status) {
-      case 'pending': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
-      case 'in-progress': return 'bg-blue-100 text-blue-800 border-blue-300';
-      case 'completed': return 'bg-green-100 text-green-800 border-green-300';
-      case 'failed': return 'bg-red-100 text-red-800 border-red-300';
-      case 'retrying': return 'bg-orange-100 text-orange-800 border-orange-300'; 
-      default: return 'bg-gray-100 text-gray-800 border-gray-300';
-    }
-  };
+  // getStatusPillClasses is kept here because the Modal section below uses it.
+  // TaskListItem imports its own copy from utils.ts.
+  // This could be refactored so Modal also imports from utils.ts or gets classes as props.
 
   if (!currentMissionId || !mission) {
     return (
@@ -177,47 +147,9 @@ export function TaskList() {
            : "No tasks have been generated for this mission yet, or decomposition is complete with no tasks."}
        </p>
       ) : (
-        <ul className="space-y-4">
+        <ul className="space-y-3"> {/* Adjusted space-y */}
           {mission.tasks.map((task) => (
-            <li 
-              key={task.id} 
-              className="p-4 border border-gray-200 rounded-lg bg-gray-50 shadow-sm hover:shadow-lg hover:border-blue-300 transition-all duration-150 ease-in-out cursor-pointer"
-              onClick={() => handleTaskClick(task)}
-              role="button"
-              tabIndex={0}
-              onKeyPress={(e) => { if (e.key === 'Enter' || e.key === ' ') handleTaskClick(task); }}
-            >
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center mb-2">
-                <h3 className="text-lg font-medium text-gray-700 flex-grow pr-2 break-words">{task.description}</h3>
-                <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${getStatusPillClasses(task.status)} whitespace-nowrap mt-2 sm:mt-0`}>
-                  {task.status.toUpperCase()}
-                </span>
-              </div>
-              <div className="text-xs text-gray-500 space-x-2 mb-1">
-                <span>ID: <span className="font-mono text-gray-700">{task.id}</span></span>
-                <span className="text-gray-300">|</span>
-                <span>Retries: <span className="font-semibold text-gray-700">{task.retries}</span></span>
-              </div>
-              {task.result && !task.failureDetails && task.status === 'completed' && (
-                  <div className="mt-1 text-xs text-gray-500">
-                      <strong>Result Preview: </strong> 
-                      <span className="italic text-gray-600">{String(task.result).substring(0,100)}{String(task.result).length > 100 ? '...' : ''}</span>
-                  </div>
-              )}
-               <div className="text-xs text-gray-400 mt-2 border-t border-gray-200 pt-2">
-                  <span>Last Updated: {new Date(task.updatedAt).toLocaleString()}</span>
-               </div>
-               {task.status === 'failed' && task.failureDetails && (
-                <div className="mt-2 p-1.5 rounded bg-red-50 border border-red-200 text-red-600 text-xs">
-                  <p className="font-medium truncate" title={task.failureDetails.reason}>Failed: {task.failureDetails.reason.substring(0,100)}...</p>
-                </div>
-              )}
-               {task.validationOutcome && !task.validationOutcome.isValid && task.status !== 'failed' && ( // Show validation warnings if not already failed
-                 <div className="mt-2 p-1.5 rounded bg-yellow-50 border border-yellow-300 text-yellow-700 text-xs">
-                   <p className="font-medium truncate" title={task.validationOutcome.critique}>Validation: {task.validationOutcome.critique?.substring(0,100)}...</p>
-                 </div>
-               )}
-            </li>
+            <TaskListItem key={task.id} task={task} onTaskClick={handleTaskClick} />
           ))}
         </ul>
       )}
