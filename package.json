@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "start:engine": "NODE_PATH=./src tsx src/scripts/runEngine.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
