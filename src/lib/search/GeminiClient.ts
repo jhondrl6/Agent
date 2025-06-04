@@ -67,9 +67,10 @@ export class GeminiClient {
       maxOutputTokens: params.maxOutputTokens,
       // Only include topK and topP if they are explicitly provided,
       // as their default values might not be consistent or known here.
+      // topK and topP are not currently part of GeminiRequestParams
     };
-    if (params.topK !== undefined) keyParts.topK = params.topK;
-    if (params.topP !== undefined) keyParts.topP = params.topP;
+    // if (params.topK !== undefined) keyParts.topK = params.topK; // Not in type
+    // if (params.topP !== undefined) keyParts.topP = params.topP; // Not in type
 
     // Sort keys for a stable JSON string
     const sortedKeys = Object.keys(keyParts).sort();
@@ -139,10 +140,10 @@ export class GeminiClient {
       if (!sdkResponse) {
         console.error('[GeminiClient] SDK response is undefined. Full result:', result);
         // Check for blocked prompt or other issues
-        if (result.response === undefined && result.promptFeedback?.blockReason) {
-            throw new Error(`Prompt was blocked: ${result.promptFeedback.blockReason}. ${result.promptFeedback.blockReasonMessage || ''}`);
+        if (result.response?.promptFeedback?.blockReason) { // Access promptFeedback through response
+            throw new Error(`Prompt was blocked: ${result.response.promptFeedback.blockReason}. ${result.response.promptFeedback.blockReasonMessage || ''}`);
         }
-        throw new Error('No response received from Gemini API or prompt was blocked.');
+        throw new Error('No response received from Gemini API or prompt was blocked (reason not available on response.promptFeedback).');
       }
 
       // Adapt the SDK response to our GeminiResponse type

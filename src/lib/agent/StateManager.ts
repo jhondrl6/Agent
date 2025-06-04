@@ -185,12 +185,12 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
 
   setAgentError: (error: string | null) =>
     set((state) => ({
-      agentState: { ...state.agentState, error: error },
+      agentState: { ...state.agentState, error: error === null ? undefined : error },
     })),
 
   clearAgentError: () =>
     set((state) => ({
-      agentState: { ...state.agentState, error: null },
+      agentState: { ...state.agentState, error: undefined },
     })),
 
   setCurrentMissionId: (missionId) => // This can still be used or phased out in favor of setAgentState
@@ -261,8 +261,8 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
       validationOutcome: {
         isValid: true,
         critique: 'Manually approved by user.',
-        suggestedAction: 'none',
-        validatedAt: new Date(),
+        suggestedAction: undefined,
+        // validatedAt: new Date(), // This property does not exist on ValidationOutput
       },
       updatedAt: new Date(),
       failureDetails: undefined,
@@ -315,10 +315,10 @@ export const useAgentStore = create<StoreState & StoreActions>((set, get) => ({
       status: 'failed',
       result: 'Manually failed by user.', // Or keep undefined, or use part of manualReason
       failureDetails: {
+        reason: manualReason, // Use manualReason as the reason
         originalError: manualReason,
         suggestedAction: 'abandon',
-        handledAt: new Date(),
-        isManualFailure: true,
+        timestamp: new Date(), // Add timestamp
       },
       validationOutcome: undefined,
       updatedAt: new Date(),

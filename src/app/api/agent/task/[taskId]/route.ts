@@ -5,7 +5,7 @@ import {
   updateTask as dbUpdateTask,
   deleteTask as dbDeleteTask,
 } from '@/lib/database/services';
-import { Task } from '@prisma/client'; // Use Prisma type for DB interactions
+import { Task, Prisma } from '@prisma/client'; // Use Prisma type for DB interactions
 import { useAgentStore } from '@/lib/agent/StateManager'; // For logging
 
 export async function GET(
@@ -55,21 +55,21 @@ export async function PUT(
     // Parse JSON string fields for the response
     let responseTask = updatedTask;
     if (responseTask) {
-        const parseJsonIfNeeded = (jsonString: string | null | undefined) => {
-          if (typeof jsonString === 'string') {
-            try { return JSON.parse(jsonString); }
+        const parseJsonIfNeeded = (jsonValue: Prisma.JsonValue | null) => {
+          if (typeof jsonValue === 'string') {
+            try { return JSON.parse(jsonValue); }
             catch (e) {
-              addLog({level: 'warn', message: '[API] PUT Task: Failed to parse JSON string from task field in response', details: { taskId: responseTask.id, field: 'unknown', value: jsonString, error: (e as Error).message }});
-              return jsonString;
+              addLog({level: 'warn', message: '[API] PUT Task: Failed to parse JSON string from task field in response', details: { taskId: responseTask.id, field: 'unknown', value: jsonValue, error: (e as Error).message }});
+              return jsonValue;
             }
           }
-          return jsonString;
+          return jsonValue;
         };
         responseTask = {
             ...responseTask,
-            result: parseJsonIfNeeded(responseTask.result),
-            failureDetails: parseJsonIfNeeded(responseTask.failureDetails),
-            validationOutcome: parseJsonIfNeeded(responseTask.validationOutcome),
+            result: parseJsonIfNeeded(responseTask.result) as any, // Cast needed if result in responseTask is expected to be specific object
+            failureDetails: parseJsonIfNeeded(responseTask.failureDetails) as any, // Cast needed for same reason
+            validationOutcome: parseJsonIfNeeded(responseTask.validationOutcome) as any, // Cast needed for same reason
         }
     }
 

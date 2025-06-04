@@ -1,16 +1,19 @@
 // src/lib/database/services.ts
-import { PrismaClient, Mission, Task } from '@prisma/client';
+import { PrismaClient, Mission, Task, Prisma } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-// Type guards for parsing JSON strings
-function isValidJson(str: string): boolean {
-  try {
-    JSON.parse(str);
-  } catch (e) {
-    return false;
+// Utility to parse JSON string fields if they are strings
+function parseJsonStringIfNeeded(jsonValue: Prisma.JsonValue | null): any {
+  if (typeof jsonValue === 'string') {
+    try {
+      return JSON.parse(jsonValue);
+    } catch (e) {
+      // console.warn("Failed to parse JSON string, returning original string:", jsonValue, e);
+      return jsonValue; // Return original string if parsing fails
+    }
   }
-  return true;
+  return jsonValue; // Return numbers, booleans, objects, arrays, null as is
 }
 
 // Mission Services
@@ -18,15 +21,16 @@ export async function createMission(missionData: {
   goal: string;
   status: string;
   result?: string;
-  tasks?: { create: Omit<Task, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>[] }; // For creating tasks along with mission
-}): Promise<Mission> {
+  tasks?: { create: Prisma.TaskCreateWithoutMissionInput[] }; // For creating tasks along with mission
+}): Promise<Prisma.MissionGetPayload<{ include: { tasks: true } }>> {
   return prisma.mission.create({
     data: {
       ...missionData,
-      tasks: missionData.tasks ? missionData.tasks : undefined,
+      // tasks field is already part of missionData if provided, and correctly typed.
+      // If missionData.tasks is undefined, it will just not be included in the spread, which is fine.
     },
     include: { tasks: true }, // Include tasks in the returned mission object
-  });
+  }) as unknown as Promise<Prisma.MissionGetPayload<{ include: { tasks: true } }>>;
 }
 
 export async function getMissionById(missionId: string): Promise<Mission | null> {
@@ -37,9 +41,9 @@ export async function getMissionById(missionId: string): Promise<Mission | null>
   if (mission && mission.tasks) {
     mission.tasks = mission.tasks.map(task => ({
       ...task,
-      result: task.result && isValidJson(task.result) ? JSON.parse(task.result) : task.result,
-      failureDetails: task.failureDetails && isValidJson(task.failureDetails) ? JSON.parse(task.failureDetails) : task.failureDetails,
-      validationOutcome: task.validationOutcome && isValidJson(task.validationOutcome) ? JSON.parse(task.validationOutcome) : task.validationOutcome,
+      result: parseJsonStringIfNeeded(task.result),
+      failureDetails: parseJsonStringIfNeeded(task.failureDetails),
+      validationOutcome: parseJsonStringIfNeeded(task.validationOutcome),
     }));
   }
   return mission;
@@ -81,14 +85,36 @@ export async function getMissionsByStatus(status: string): Promise<Mission[]> {
     if (mission.tasks) {
       mission.tasks = mission.tasks.map(task => ({
         ...task,
-        result: task.result && isValidJson(task.result) ? JSON.parse(task.result) : task.result,
-        failureDetails: task.failureDetails && isValidJson(task.failureDetails) ? JSON.parse(task.failureDetails) : task.failureDetails,
-        validationOutcome: task.validationOutcome && isValidJson(task.validationOutcome) ? JSON.parse(task.validationOutcome) : task.validationOutcome,
+        result: parseJsonStringIfNeeded(task.result),
+        failureDetails: parseJsonStringIfNeeded(task.failureDetails),
+        validationOutcome: parseJsonStringIfNeeded(task.validationOutcome),
       }));
     }
     return mission;
   });
 }
+
+export async function getProcessableMissionsForEngine(): Promise<Prisma.MissionGetPayload<{ include: { tasks: true } }>[]> {
+  const missions = await prisma.mission.findMany({
+    where: {
+      OR: [
+        { status: 'pending' },
+        { status: 'in-progress' },
+      ],
+    },
+    include: {
+      tasks: {
+        orderBy: {
+          createdAt: 'asc'
+        }
+      },
+    },
+  });
+  // Note: This function intentionally does NOT parse JSON fields within tasks (result, failureDetails, validationOutcome)
+  // The AgentExecutionEngine's mapPrismaTaskToExecutorTask is responsible for handling Prisma.JsonValue from these fields.
+  return missions;
+}
+
 
 // Task Services
 export async function createTask(taskData: {
@@ -117,9 +143,9 @@ export async function getTaskById(taskId: string): Promise<Task | null> {
   if (task) {
     return {
       ...task,
-      result: task.result && isValidJson(task.result) ? JSON.parse(task.result) : task.result,
-      failureDetails: task.failureDetails && isValidJson(task.failureDetails) ? JSON.parse(task.failureDetails) : task.failureDetails,
-      validationOutcome: task.validationOutcome && isValidJson(task.validationOutcome) ? JSON.parse(task.validationOutcome) : task.validationOutcome,
+      result: parseJsonStringIfNeeded(task.result),
+      failureDetails: parseJsonStringIfNeeded(task.failureDetails),
+      validationOutcome: parseJsonStringIfNeeded(task.validationOutcome),
     };
   }
   return null;
@@ -153,9 +179,9 @@ export async function getTasksByMissionId(missionId: string): Promise<Task[]> {
   });
   return tasks.map(task => ({
     ...task,
-    result: task.result && isValidJson(task.result) ? JSON.parse(task.result) : task.result,
-    failureDetails: task.failureDetails && isValidJson(task.failureDetails) ? JSON.parse(task.failureDetails) : task.failureDetails,
-    validationOutcome: task.validationOutcome && isValidJson(task.validationOutcome) ? JSON.parse(task.validationOutcome) : task.validationOutcome,
+    result: parseJsonStringIfNeeded(task.result),
+    failureDetails: parseJsonStringIfNeeded(task.failureDetails),
+    validationOutcome: parseJsonStringIfNeeded(task.validationOutcome),
   }));
 }
 

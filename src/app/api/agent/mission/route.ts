@@ -5,6 +5,7 @@ import { TaskDecomposer } from '@/lib/agent/TaskDecomposer';
 import { v4 as uuidv4 } from 'uuid';
 import { useAgentStore } from '@/lib/agent/StateManager';
 import { LogLevel } from '@/lib/types/agent'; // For LogLevel type
+import { Prisma } from '@prisma/client'; // Import Prisma for payload types
 
 import { createMission as dbCreateMission } from '@/lib/database/services'; // New import
 
@@ -60,13 +61,13 @@ export async function POST(req: NextRequest) {
       // Adapt decomposed tasks for Prisma's nested create
       decomposedTasksData = tasksFromDecomposer.map(t => {
         // Define prismaFailureDetails with the full structure including timestamp
-        let prismaFailureDetails: { reason: string; timestamp: Date; suggestedAction?: FailedTaskAction; originalError?: string; } | undefined = undefined;
+        let prismaFailureDetails: { reason: string; timestamp: string; suggestedAction?: FailedTaskAction; originalError?: string; } | undefined = undefined;
 
         // Handle t.failureDetails being a string or an object
         if (typeof t.failureDetails === 'string' && t.failureDetails.trim() !== '') {
           prismaFailureDetails = {
             reason: t.failureDetails,
-            timestamp: new Date(),
+            timestamp: new Date().toISOString(),
             suggestedAction: undefined, // Ensure all fields of the type are present or undefined
             originalError: undefined
           };
@@ -78,21 +79,28 @@ export async function POST(req: NextRequest) {
             suggestedAction: incomingObject.suggestedAction,
             originalError: incomingObject.originalError,
             timestamp: (typeof incomingObject.timestamp === 'undefined' || !(incomingObject.timestamp instanceof Date))
-                         ? new Date(incomingObject.timestamp || Date.now()) // Robust timestamp creation
-                         : incomingObject.timestamp
+                         ? new Date(incomingObject.timestamp || Date.now()).toISOString() // Robust timestamp creation
+                         : incomingObject.timestamp.toISOString()
           };
         }
         // If t.failureDetails was null, undefined, or an empty string not caught by the first check,
         // prismaFailureDetails remains undefined.
 
         // Return an object that conforms to Omit<Task, 'id' | 'missionId' | 'createdAt' | 'updatedAt'>
+
+        const mapToPrismaJsonInput = (value: any) => {
+          if (value === null) return Prisma.JsonNull;
+          if (value === undefined) return undefined;
+          return value;
+        };
+
         return {
           description: t.description,
           status: t.status,
-          result: t.result, // Conforms to Task['result?': any]
+          result: mapToPrismaJsonInput(t.result),
           retries: t.retries !== undefined ? t.retries : 0, // Assuming Task['retries'] is number
-          failureDetails: prismaFailureDetails, // Conforms to Task['failureDetails'] which includes timestamp
-          validationOutcome: t.validationOutcome, // Conforms to Task['validationOutcome?': ValidationOutput]
+          failureDetails: mapToPrismaJsonInput(prismaFailureDetails),
+          validationOutcome: mapToPrismaJsonInput(t.validationOutcome),
         };
       });
       addLog({ level: 'info', message: `[API] Mission for goal "${goal}" decomposed into ${decomposedTasksData.length} tasks.`});
@@ -104,7 +112,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Task decomposition failed', details: errorMsg }, { status: 500 });
     }
 
-    let persistedMission; // This will hold the mission object from the database
+    let persistedMission: Prisma.MissionGetPayload<{ include: { tasks: true } }>; // This will hold the mission object from the database
 
     if (decomposedTasksData.length === 0) {
         addLog({ level: 'warn', message: `[API] Mission for goal "${goal}" resulted in 0 tasks after decomposition. Creating mission without tasks.` });
@@ -136,6 +144,8 @@ export async function POST(req: NextRequest) {
 
     const apiMissionResponse: Mission = {
         ...persistedMission,
+        status: persistedMission.status as Mission['status'], // Assert Mission status
+        result: persistedMission.result === null ? undefined : persistedMission.result, // Handle null to undefined
         // Prisma's Date objects are fine.
         // Tasks might need parsing if JSON fields were stringified and not parsed back by create service
         // The createMission service was updated to include tasks, but it doesn't parse JSON fields from tasks.
@@ -145,21 +155,22 @@ export async function POST(req: NextRequest) {
             const { result, failureDetails, validationOutcome, ...restOfTask } = task;
             // Ensure parsing only happens on actual strings, and handle nulls gracefully.
             // Prisma will return `null` for fields not set, not the string "null".
-            const parseJsonIfNeeded = (jsonString: string | null | undefined) => {
-                if (typeof jsonString === 'string') {
+            const parseJsonIfNeeded = (jsonValue: Prisma.JsonValue | undefined) => {
+                if (typeof jsonValue === 'string') {
                     try {
-                        return JSON.parse(jsonString);
+                        return JSON.parse(jsonValue);
                     } catch (e) {
                         // Log parsing error, return original string or handle as error
-                        addLog({level: 'warn', message: '[API] Failed to parse JSON string from task field', details: { fieldValue: jsonString, error: (e as Error).message }});
-                        return jsonString; // Or throw, or return a specific error structure
+                        addLog({level: 'warn', message: '[API] Failed to parse JSON string from task field', details: { fieldValue: jsonValue, error: (e as Error).message }});
+                        return jsonValue; // Or throw, or return a specific error structure
                     }
                 }
-                return jsonString; // Return null, undefined, or already parsed object as is
+                return jsonValue; // Return null, undefined, or already parsed object as is
             };
 
             return {
                 ...restOfTask,
+                status: task.status as Task['status'], // Assert to specific string literal type
                 result: parseJsonIfNeeded(task.result),
                 failureDetails: parseJsonIfNeeded(task.failureDetails),
                 validationOutcome: parseJsonIfNeeded(task.validationOutcome),

@@ -28,7 +28,7 @@ export class TavilyClient {
     if (!apiKey) {
       throw new Error('Tavily API key is required.');
     }
-    this.client = new TavilySDKClient(apiKey);
+    this.client = new TavilySDKClient({ apiKey: apiKey });
     console.log('[TavilyClient] Initialized with Tavily SDK.');
 
     const ttl = cacheOptions?.ttl ?? DEFAULT_TAVILY_CACHE_TTL_MS;
@@ -114,7 +114,7 @@ export class TavilyClient {
       // The Tavily SDK's search method might return a slightly different structure.
       // We need to adapt it to our TavilySearchResponse and TavilySearchResultItem.
       // Based on typical Tavily API responses:
-      const sdkResponse = await this.client.search(query, searchOptions);
+      const sdkResponse = await this.client.search({ query: query, ...searchOptions });
 
       // Assuming sdkResponse has fields like: query, answer, response_time, results (array)
       // And each item in results has: title, url, content, score, raw_content
@@ -140,7 +140,7 @@ export class TavilyClient {
       return {
         query: sdkResponse.query || query,
         answer: sdkResponse.answer, // if includeAnswer was true
-        response_time: sdkResponse.response_time,
+        response_time: typeof sdkResponse.response_time === 'string' ? parseFloat(sdkResponse.response_time) : sdkResponse.response_time,
         results: adaptedResults,
       };
 

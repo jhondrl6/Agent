@@ -17,7 +17,7 @@ export interface Task {
   retries: number;
   createdAt: Date;
   updatedAt: Date;
-  failureDetails?: {
+  failureDetails?: string | {
     reason: string; // Reason for failure from DecisionEngine or direct error
     suggestedAction?: FailedTaskAction; // Suggested action from DecisionEngine
     originalError?: string; // Simplified original error message
