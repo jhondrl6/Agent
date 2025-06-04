@@ -67,6 +67,7 @@ export interface SerperSearchResponse {
 // Gemini Types
 export interface GeminiRequestParams {
   prompt: string;
+  model?: string; // Optional model name
   // Add other relevant parameters for Gemini API
   maxOutputTokens?: number;
   temperature?: number;

@@ -30,6 +30,6 @@ model Task {
   retries   Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  failureDetails String? // JSON stored as String, parse when reading
-  validationOutcome String? // JSON stored as String, parse when reading
+  failureDetails Json? // JSON stored as String, parse when reading
+  validationOutcome Json? // JSON stored as String, parse when reading
 }

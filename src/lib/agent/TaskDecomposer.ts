@@ -106,7 +106,7 @@ ${userPrompt}`;
         id: `${mission.id}-task-${String(index + 1).padStart(3, '0')}`,
         missionId: mission.id,
         description: taskDesc.description,
-        status: 'pending',
+        status: 'pending' as Task['status'], // Cast to specific status type
         retries: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -125,7 +125,7 @@ ${userPrompt}`;
           id: `${mission.id}-task-fallback`,
           missionId: mission.id,
           description: `Fallback: Could not decompose mission "${mission.goal}". Reason: ${error.message}`,
-          status: 'pending', // Or 'failed' immediately if preferred
+          status: 'pending' as Task['status'], // Or 'failed' immediately if preferred
           retries: 0,
           createdAt: new Date(),
           updatedAt: new Date(),

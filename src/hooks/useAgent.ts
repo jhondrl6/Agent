@@ -7,7 +7,7 @@ const POLLING_INTERVAL = 5000; // Poll every 5 seconds
 
 export function useAgent() {
   const { missions, agentState, updateMissionState, addLog, setAgentLoading, clearAgentError } = useAgentStore();
-  const [activeMissionId, setActiveMissionId] = useState<string | null>(agentState.currentMissionId);
+  const [activeMissionId, setActiveMissionId] = useState<string | null>(agentState.currentMissionId || null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const currentMission = activeMissionId ? missions[activeMissionId] : null;
@@ -64,13 +64,13 @@ export function useAgent() {
   // Effect to sync activeMissionId with global store's currentMissionId
   useEffect(() => {
     if (agentState.currentMissionId !== activeMissionId) {
-      setActiveMissionId(agentState.currentMissionId);
+      setActiveMissionId(agentState.currentMissionId || null);
     }
   }, [agentState.currentMissionId, activeMissionId]);
 
   const setCurrentMissionId = useCallback((missionId: string | null) => {
     // This function updates the Zustand store, which then triggers the effect above.
-    useAgentStore.getState().setAgentState({ currentMissionId: missionId });
+    useAgentStore.getState().setAgentState({ currentMissionId: missionId === null ? undefined : missionId });
     // No need to call setActiveMissionId here directly, effect will handle it.
   }, []);
 

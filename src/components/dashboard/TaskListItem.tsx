@@ -48,11 +48,21 @@ const TaskListItemInternal = ({ task, onTaskClick }: TaskListItemProps) => {
       previewTitle = "Task completed without a displayable result.";
     }
   } else if (task.status === 'failed' && task.failureDetails) {
+    if (typeof task.failureDetails === 'string') {
+      previewText = `Failed: ${task.failureDetails.substring(0, 70)}...`;
+      previewTitle = task.failureDetails;
+    } else {
       previewText = `Failed: ${task.failureDetails.reason.substring(0, 70)}...`;
       previewTitle = task.failureDetails.reason;
+    }
   } else if (task.status === 'retrying' && task.failureDetails) {
+    if (typeof task.failureDetails === 'string') {
+      previewText = `Retrying (${task.retries}/${DecisionEngine.MAX_TASK_RETRIES}): ${task.failureDetails.substring(0,50)}...`;
+      previewTitle = task.failureDetails;
+    } else {
       previewText = `Retrying (${task.retries}/${DecisionEngine.MAX_TASK_RETRIES}): ${task.failureDetails.reason.substring(0,50)}...`;
       previewTitle = task.failureDetails.reason;
+    }
   } else if (task.status === 'in-progress') {
       previewText = "Execution currently in progress...";
       previewTitle = "Task is being executed by the agent.";
@@ -94,7 +104,7 @@ const TaskListItemInternal = ({ task, onTaskClick }: TaskListItemProps) => {
         <span className="text-xs font-medium text-gray-500">Manual:</span>
         <button
           onClick={(e) => { e.stopPropagation(); handleMarkComplete(); }}
-          disabled={task.status === 'completed'}
+          // disabled check for 'completed' is redundant due to parent conditional rendering
           className="px-2 py-1 text-xs font-medium text-white bg-green-600 rounded hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50 disabled:opacity-60 disabled:cursor-not-allowed"
           title="Manually mark task as completed"
         >
@@ -102,7 +112,7 @@ const TaskListItemInternal = ({ task, onTaskClick }: TaskListItemProps) => {
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); handleMarkFailed(); }}
-          disabled={task.status === 'completed'} // Already completed tasks can't be failed. Failed tasks can be re-failed (e.g. new reason)
+          // disabled check for 'completed' is redundant due to parent conditional rendering
           className="px-2 py-1 text-xs font-medium text-white bg-red-600 rounded hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 disabled:opacity-60 disabled:cursor-not-allowed"
           title="Manually mark task as failed"
         >

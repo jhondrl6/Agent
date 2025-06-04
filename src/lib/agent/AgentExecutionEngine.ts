@@ -1,8 +1,8 @@
-import { Mission, Task as PrismaTask, JsonValue } from '@prisma/client'; // Renamed to avoid conflict, import JsonValue
-import * as dbService from '$lib/database/services';
+import { Mission, Task as PrismaTask, Prisma } from '@prisma/client'; // Renamed to avoid conflict, import Prisma
+import * as dbService from '@/lib/database/services';
 import { TaskExecutor, BackendTaskCallbacks } from './TaskExecutor';
-import { Task as ExecutorTask, LogLevel } from '$lib/types/agent'; // Import ExecutorTask and LogLevel
-import * as logger from '$lib/utils/logger';
+import { Task as ExecutorTask, LogLevel } from '@/lib/types/agent'; // Import ExecutorTask and LogLevel
+import * as logger from '@/lib/utils/logger';
 
 
 // Define LogEntry structure, using LogLevel from your types
@@ -26,13 +26,29 @@ export class AgentExecutionEngine {
 
         if (updates.status === 'completed' || updates.status === 'failed') {
           const logOutput = { logs: taskSpecificLogs };
+
+          let currentResultObject: object;
+          if (typeof result === 'object' && result !== null) {
+            currentResultObject = result;
+          } else if (result === null || result === undefined) {
+            currentResultObject = { content: null };
+          } else { // string, number, boolean
+            currentResultObject = { content: String(result) };
+          }
+
+          let currentFailureDetailsObject: object;
+          if (typeof failureDetails === 'object' && failureDetails !== null) {
+            currentFailureDetailsObject = failureDetails;
+          } else if (failureDetails === null || failureDetails === undefined) {
+            currentFailureDetailsObject = { reason: null };
+          } else { // string, number, boolean
+            currentFailureDetailsObject = { reason: String(failureDetails) };
+          }
+
           if (updates.status === 'completed') {
-            // Ensure result is an object to spread logs into
-            const currentResult = (typeof result === 'string' || result === null || result === undefined) ? { content: result } : result;
-            result = { ...currentResult, ...logOutput  };
+            result = JSON.stringify({ ...currentResultObject, ...logOutput  });
           } else { // 'failed'
-            const currentFailureDetails = (typeof failureDetails === 'string' || failureDetails === null || failureDetails === undefined) ? { reason: failureDetails } : failureDetails;
-            failureDetails = { ...currentFailureDetails, ...logOutput };
+            failureDetails = JSON.stringify({ ...currentFailureDetailsObject, ...logOutput });
           }
           this.taskLogs.delete(taskId);
         }
@@ -40,9 +56,9 @@ export class AgentExecutionEngine {
         await this.updateTaskStatus(
           taskId,
           updates.status as string,
-          result as JsonValue, // Cast to JsonValue
-          failureDetails as JsonValue, // Cast to JsonValue
-          updates.validationOutcome as JsonValue, // Cast to JsonValue
+          result as Prisma.JsonValue, // Cast to Prisma.JsonValue
+          failureDetails as Prisma.JsonValue, // Cast to Prisma.JsonValue
+          updates.validationOutcome as Prisma.JsonValue, // Cast to Prisma.JsonValue
         );
       },
       setAgentFailure: async (missionId, agentError) => {
@@ -69,8 +85,8 @@ export class AgentExecutionEngine {
       // Ensure these JSON fields are correctly handled. If dbService doesn't parse them,
       // we might need JSON.parse here, but typically Prisma handles this.
       result: prismaTask.result as any, // ExecutorTask.result is `any`
-      failureDetails: prismaTask.failureDetails ? prismaTask.failureDetails as ExecutorTask['failureDetails'] : undefined,
-      validationOutcome: prismaTask.validationOutcome ? prismaTask.validationOutcome as ExecutorTask['validationOutcome'] : undefined,
+      failureDetails: prismaTask.failureDetails ? prismaTask.failureDetails as unknown as ExecutorTask['failureDetails'] : undefined,
+      validationOutcome: prismaTask.validationOutcome ? prismaTask.validationOutcome as unknown as ExecutorTask['validationOutcome'] : undefined,
     };
   }
 
@@ -88,23 +104,9 @@ export class AgentExecutionEngine {
     };
   }
 
-  async getProcessableMissions(): Promise<Mission[]> {
+  async getProcessableMissions(): Promise<Prisma.MissionGetPayload<{ include: { tasks: true } }>[]> {
     logger.debug('Fetching processable missions...', 'AgentExecutionEngine');
-    const missions = await dbService.prisma.mission.findMany({
-      where: {
-        OR: [
-          { status: 'pending' },
-          { status: 'in-progress' },
-        ],
-      },
-      include: {
-        tasks: {
-          orderBy: {
-            createdAt: 'asc' // Ensure tasks are sorted by creation time
-          }
-        },
-      },
-    });
+    const missions = await dbService.getProcessableMissionsForEngine();
     logger.debug(`Found ${missions.length} processable missions.`, 'AgentExecutionEngine', { count: missions.length });
     return missions;
   }
@@ -116,16 +118,12 @@ export class AgentExecutionEngine {
     failureDetails?: any,
     validationOutcome?: any,
   ): Promise<void> {
-    // Ensure Prisma compatible types (e.g. null for empty JSON fields)
-    await dbService.prisma.task.update({
-      where: { id: taskId },
-      data: {
-        status,
-        result: result === undefined ? null : result,
-        failureDetails: failureDetails === undefined ? null : failureDetails,
-        validationOutcome: validationOutcome === undefined ? null : validationOutcome,
-        updatedAt: new Date(),
-      },
+    await dbService.updateTask(taskId, {
+      status,
+      result: result, // dbService.updateTask handles undefined and stringification
+      failureDetails: failureDetails, // dbService.updateTask handles undefined and stringification
+      validationOutcome: validationOutcome, // dbService.updateTask handles undefined and stringification
+      // updatedAt is handled by dbService.updateTask if it's part of its logic, or automatically by Prisma
     });
   }
 
@@ -134,13 +132,10 @@ export class AgentExecutionEngine {
     status: string,
     result?: string, // Result is expected to be a string summary
   ): Promise<void> {
-    await dbService.prisma.mission.update({
-      where: { id: missionId },
-      data: {
-        status,
-        result: result === undefined ? null : result, // Prisma expects null for empty optional strings
-        updatedAt: new Date(),
-      },
+    await dbService.updateMission(missionId, {
+      status,
+      result: result, // dbService.updateMission handles undefined
+      // updatedAt is handled by dbService.updateMission or automatically by Prisma
     });
   }
 
@@ -197,7 +192,7 @@ export class AgentExecutionEngine {
       // After all tasks for the current mission have been processed (or one failed critically)
       // Fetch the latest state of all tasks for that mission
       logger.debug(`All tasks for mission ${mission.id} have been processed in this cycle. Determining final mission status.`, 'AgentExecutionEngine');
-      const finalTasks = await dbService.prisma.task.findMany({ where: { missionId: mission.id } });
+      const finalTasks = await dbService.getTasksByMissionId(mission.id); // Use service function
 
       let completedTasks = 0;
       let failedTasks = 0;

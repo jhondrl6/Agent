@@ -1,6 +1,7 @@
 // src/lib/agent/DecisionEngine.ts
 import { Task } from '@/lib/types/agent';
-import { GeminiClient, GeminiRequestParams } from '@/lib/search/GeminiClient';
+import { GeminiClient } from '@/lib/search/GeminiClient';
+import type { GeminiRequestParams } from '@/lib/types/search'; // Corrected import
 import { LogLevel } from '@/lib/types/agent';
 import * as logger from '../utils/logger';
 
@@ -221,7 +222,7 @@ Example Output (if Serper is available): {"provider": "serper", "reason": "The t
       const availableActions: FailedTaskAction[] = ['retry', 'abandon', 're-plan', 'escalate'];
       const actionsString = availableActions.join("', '");
       let failureHistoryContext = "";
-      if (task.failureDetails && task.failureDetails.originalError) {
+      if (task.failureDetails && typeof task.failureDetails === 'object' && task.failureDetails.originalError) {
           failureHistoryContext = `The task previously failed with: "${task.failureDetails.originalError}". Suggested action then was: ${task.failureDetails.suggestedAction || 'N/A'}. This is retry number ${task.retries} (0-indexed).`;
       } else if (task.retries > 0) {
           failureHistoryContext = `This is retry number ${task.retries} (0-indexed) for this task. Previous attempts also failed.`;

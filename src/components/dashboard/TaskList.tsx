@@ -196,12 +196,16 @@ export function TaskList() {
           {selectedTask.failureDetails && (
             <div className="p-3 rounded bg-red-50 border border-red-200 text-red-700">
               <strong className="text-gray-600 block mb-1">Failure Details:</strong>
-              <div className="space-y-1">
-                <p><strong>Reason:</strong> {selectedTask.failureDetails.reason}</p>
-                {selectedTask.failureDetails.suggestedAction && <p><strong>Engine Suggested Action:</strong> {selectedTask.failureDetails.suggestedAction}</p>}
-                {selectedTask.failureDetails.originalError && <p><strong>Original Error:</strong> <span className="font-mono text-xs">{selectedTask.failureDetails.originalError}</span></p>}
-                <p><strong>Timestamp:</strong> {new Date(selectedTask.failureDetails.timestamp).toLocaleString()}</p>
-              </div>
+              {typeof selectedTask.failureDetails === 'string' ? (
+                <p>{selectedTask.failureDetails}</p>
+              ) : (
+                <div className="space-y-1">
+                  <p><strong>Reason:</strong> {selectedTask.failureDetails.reason}</p>
+                  {selectedTask.failureDetails.suggestedAction && <p><strong>Engine Suggested Action:</strong> {selectedTask.failureDetails.suggestedAction}</p>}
+                  {selectedTask.failureDetails.originalError && <p><strong>Original Error:</strong> <span className="font-mono text-xs">{selectedTask.failureDetails.originalError}</span></p>}
+                  <p><strong>Timestamp:</strong> {new Date(selectedTask.failureDetails.timestamp).toLocaleString()}</p>
+                </div>
+              )}
             </div>
           )}
           <div className="mt-6 pt-4 border-t border-gray-200 flex flex-wrap gap-3 justify-end">
@@ -214,7 +218,7 @@ export function TaskList() {
             </button>
             <button
               onClick={handleManualFail}
-              disabled={selectedTask.status === 'failed' && !!selectedTask.failureDetails?.reason.includes('Manually failed by user')}
+              disabled={selectedTask.status === 'failed' && typeof selectedTask.failureDetails === 'object' && !!selectedTask.failureDetails?.reason?.includes('Manually failed by user')}
               className="px-4 py-2 text-sm font-medium rounded-md bg-red-600 text-white hover:bg-red-700 disabled:bg-gray-400 disabled:text-gray-700 disabled:cursor-not-allowed"
             >
               Mark Failed
