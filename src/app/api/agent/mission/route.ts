@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Mission, Task } from '@/lib/types/agent';
+import { FailedTaskAction } from '@/lib/agent/DecisionEngine'; // Added import
 import { TaskDecomposer } from '@/lib/agent/TaskDecomposer';
 import { v4 as uuidv4 } from 'uuid';
 import { useAgentStore } from '@/lib/agent/StateManager';
@@ -41,7 +42,8 @@ export async function POST(req: NextRequest) {
 
     addLog({ level: 'info', message: `[API] Preparing to decompose mission for goal: "${goal}"`});
 
-    let decomposedTasksData: Omit<Task, 'id' | 'missionId' | 'createdAt' | 'updatedAt'>[] = [];
+    // Let type inference determine the type of decomposedTasksData
+    let decomposedTasksData;
     try {
       // Create a temporary mission object for the decomposer, as it might expect an ID or full mission structure.
       // The ID generated here is temporary and won't be the one stored in the DB.
@@ -57,37 +59,40 @@ export async function POST(req: NextRequest) {
 
       // Adapt decomposed tasks for Prisma's nested create
       decomposedTasksData = tasksFromDecomposer.map(t => {
-        // Explicitly construct the object for Prisma's TaskCreateManyMissionInput-like type
-        // This structure is Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>
-        // PrismaTask fields: description, status, result?, retries, failureDetails?, validationOutcome?
-        let prismaFailureDetails: { reason: string } | undefined = undefined;
-        if (typeof t.failureDetails === 'string' && t.failureDetails.trim() !== '') {
-          prismaFailureDetails = { reason: t.failureDetails };
-        } else if (typeof t.failureDetails === 'object' && t.failureDetails !== null) {
-          // If it's already an object, assume it's correctly structured or Prisma will handle/validate
-          // Or, if specific structure is known for objects, adapt here.
-          // For now, let's pass it if it's an object. Consider if it needs stringification
-          // based on Prisma schema. Given the error, Prisma wants an object, not a stringified object.
-          // So, if t.failureDetails is { foo: "bar" }, JSON.stringify would make it "{"foo":"bar"}"
-          // which is not what's desired.
-          // This branch might need refinement if t.failureDetails can be various object types.
-          // However, the original issue mentioned "string | null" becoming the problem.
-          // The most direct fix for "string | null" is to handle the string case to become an object,
-          // and null/undefined to become undefined.
-          // If t.failureDetails is an object, it's assumed to be in the correct shape for Prisma.
-          prismaFailureDetails = t.failureDetails as any; // Cast to any if unsure about specific object structure
-        }
-        // If t.failureDetails was null, undefined, or empty string, prismaFailureDetails remains undefined.
+        // Define prismaFailureDetails with the full structure including timestamp
+        let prismaFailureDetails: { reason: string; timestamp: Date; suggestedAction?: FailedTaskAction; originalError?: string; } | undefined = undefined;
 
+        // Handle t.failureDetails being a string or an object
+        if (typeof t.failureDetails === 'string' && t.failureDetails.trim() !== '') {
+          prismaFailureDetails = {
+            reason: t.failureDetails,
+            timestamp: new Date(),
+            suggestedAction: undefined, // Ensure all fields of the type are present or undefined
+            originalError: undefined
+          };
+        } else if (typeof t.failureDetails === 'object' && t.failureDetails !== null) {
+          const incomingObject = t.failureDetails as any; // Cast to handle various object shapes from decomposer output
+
+          prismaFailureDetails = {
+            reason: incomingObject.reason || 'Unknown failure reason', // Ensure reason exists
+            suggestedAction: incomingObject.suggestedAction,
+            originalError: incomingObject.originalError,
+            timestamp: (typeof incomingObject.timestamp === 'undefined' || !(incomingObject.timestamp instanceof Date))
+                         ? new Date(incomingObject.timestamp || Date.now()) // Robust timestamp creation
+                         : incomingObject.timestamp
+          };
+        }
+        // If t.failureDetails was null, undefined, or an empty string not caught by the first check,
+        // prismaFailureDetails remains undefined.
+
+        // Return an object that conforms to Omit<Task, 'id' | 'missionId' | 'createdAt' | 'updatedAt'>
         return {
           description: t.description,
           status: t.status,
-          // Ensure result, failureDetails, and validationOutcome are stringified or null
-          result: t.result !== undefined ? JSON.stringify(t.result) : null,
-          // Retries should default to 0 if not present from decomposer, as Prisma expects an Int.
-          retries: t.retries !== undefined ? t.retries : 0,
-          failureDetails: prismaFailureDetails, // Use the new variable
-          validationOutcome: t.validationOutcome !== undefined ? JSON.stringify(t.validationOutcome) : null,
+          result: t.result, // Conforms to Task['result?': any]
+          retries: t.retries !== undefined ? t.retries : 0, // Assuming Task['retries'] is number
+          failureDetails: prismaFailureDetails, // Conforms to Task['failureDetails'] which includes timestamp
+          validationOutcome: t.validationOutcome, // Conforms to Task['validationOutcome?': ValidationOutput]
         };
       });
       addLog({ level: 'info', message: `[API] Mission for goal "${goal}" decomposed into ${decomposedTasksData.length} tasks.`});
