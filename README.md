@@ -73,6 +73,14 @@ To fully operate the agent, you typically need to run two main components: the w
     ```
     Open [http://localhost:3000](http://localhost:3000) in your browser to access the dashboard.
 
+### Important Note on Mission Creation for Engine Processing
+
+The Agent Execution Engine, started with `npm run start:engine` (or `npm run start:engine:unix`), processes missions that are already present in the database and are in a 'pending' or 'in-progress' state.
+
+To create a mission, you need to use the API endpoint: `POST /api/agent/mission`. You can find detailed instructions and examples on how to do this in the `MANUAL_TESTING_PLAN.md` document.
+
+If you start the engine and there are no processable missions (i.e., no missions in 'pending' or 'in-progress' state in the database), the engine will display a message like "No processable missions found" and will continue to poll for new missions.
+
 ## Operating the Agent
 
 There are two primary ways to interact with the Autonomous Research Agent:
