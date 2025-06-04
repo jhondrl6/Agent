@@ -1,5 +1,5 @@
 // src/lib/search/TavilyClient.ts
-import Tavily from 'tavily'; // The Tavily SDK
+import { TavilyClient as TavilySDKClient } from 'tavily'; // The Tavily SDK
 import { LRUCache } from 'lru-cache';
 import { TavilySearchParams, TavilySearchResponse, TavilySearchResultItem } from '@/lib/types/search';
 
@@ -20,7 +20,7 @@ function deepClone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj));
 }
 export class TavilyClient {
-  private client: Tavily;
+  private client: TavilySDKClient;
   private cache: LRUCache<string, TavilySearchResponse>;
   private cacheEnabled: boolean;
 
@@ -28,7 +28,7 @@ export class TavilyClient {
     if (!apiKey) {
       throw new Error('Tavily API key is required.');
     }
-    this.client = new Tavily(apiKey);
+    this.client = new TavilySDKClient(apiKey);
     console.log('[TavilyClient] Initialized with Tavily SDK.');
 
     const ttl = cacheOptions?.ttl ?? DEFAULT_TAVILY_CACHE_TTL_MS;

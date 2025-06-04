@@ -1,13 +1,13 @@
 // src/app/api/agent/status/[missionId]/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server'; // Ensure NextRequest is imported
 import { getMissionById } from '@/lib/database/services';
 import { Mission } from '@prisma/client';
 
 export async function GET(
-  request: Request,
-  { params }: { params: { missionId: string } }
+  request: NextRequest, // Changed to NextRequest
+  context: { params: Promise<{ missionId: string }> }
 ) {
-  const missionId = params.missionId;
+  const { missionId } = await context.params;
 
   if (!missionId) {
     return NextResponse.json({ error: 'Mission ID is required' }, { status: 400 });

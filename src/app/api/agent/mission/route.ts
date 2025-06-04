@@ -56,9 +56,20 @@ export async function POST(req: NextRequest) {
       const tasksFromDecomposer = await taskDecomposer.decomposeMission(tempMissionForDecomposition);
 
       // Adapt decomposed tasks for Prisma's nested create
-      decomposedTasksData = tasksFromDecomposer.map(task => {
-        const { id, missionId, createdAt, updatedAt, ...rest } = task; // Exclude DB-generated fields
-        return rest;
+      decomposedTasksData = tasksFromDecomposer.map(t => {
+        // Explicitly construct the object for Prisma's TaskCreateManyMissionInput-like type
+        // This structure is Omit<PrismaTask, 'id' | 'missionId' | 'createdAt' | 'updatedAt' | 'mission'>
+        // PrismaTask fields: description, status, result?, retries, failureDetails?, validationOutcome?
+        return {
+          description: t.description,
+          status: t.status,
+          // Ensure result, failureDetails, and validationOutcome are stringified or null
+          result: t.result !== undefined ? JSON.stringify(t.result) : null,
+          // Retries should default to 0 if not present from decomposer, as Prisma expects an Int.
+          retries: t.retries !== undefined ? t.retries : 0,
+          failureDetails: t.failureDetails !== undefined ? JSON.stringify(t.failureDetails) : null,
+          validationOutcome: t.validationOutcome !== undefined ? JSON.stringify(t.validationOutcome) : null,
+        };
       });
       addLog({ level: 'info', message: `[API] Mission for goal "${goal}" decomposed into ${decomposedTasksData.length} tasks.`});
 
