@@ -9,11 +9,11 @@ import { Task } from '@prisma/client'; // Use Prisma type for DB interactions
 import { useAgentStore } from '@/lib/agent/StateManager'; // For logging
 
 export async function GET(
-  req: NextRequest,
-  { params }: { params: { taskId: string } }
+  request: NextRequest,
+  context: { params: Promise<{ taskId: string }> }
 ) {
   const addLog = useAgentStore.getState().addLog;
-  const { taskId } = params;
+  const { taskId } = await context.params;
   try {
     const task = await dbGetTaskById(taskId); // This service already handles JSON parsing for GET
     if (!task) {
@@ -30,13 +30,13 @@ export async function GET(
 }
 
 export async function PUT(
-  req: NextRequest,
-  { params }: { params: { taskId: string } }
+  request: NextRequest,
+  context: { params: Promise<{ taskId: string }> }
 ) {
   const addLog = useAgentStore.getState().addLog;
-  const { taskId } = params;
+  const { taskId } = await context.params;
   try {
-    const body = await req.json();
+    const body = await request.json();
     // Ensure 'id', 'missionId', 'createdAt', 'updatedAt' are not in body or are ignored
     const { id, missionId, createdAt, updatedAt, ...updateData } = body;
 
@@ -83,11 +83,11 @@ export async function PUT(
 }
 
 export async function DELETE(
-  req: NextRequest,
-  { params }: { params: { taskId: string } }
+  request: NextRequest,
+  context: { params: Promise<{ taskId: string }> }
 ) {
   const addLog = useAgentStore.getState().addLog;
-  const { taskId } = params;
+  const { taskId } = await context.params;
   try {
     const deletedTask = await dbDeleteTask(taskId);
     // Prisma's delete throws P2025 if not found.
