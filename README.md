@@ -56,9 +56,14 @@ To fully operate the agent, you typically need to run two main components: the w
 
 1.  **Run the Agent Execution Engine (Backend Processor):**
     This standalone Node.js script processes the queue of missions and tasks.
-    ```bash
-    npm run start:engine
-    ```
+    *   For Windows:
+        ```bash
+        npm run start:engine
+        ```
+    *   For UNIX-like systems (Linux, macOS):
+        ```bash
+        npm run start:engine:unix
+        ```
     Keep this running in a terminal window to ensure tasks are executed.
 
 2.  **Run the Next.js Development Server (Web UI & API):**
