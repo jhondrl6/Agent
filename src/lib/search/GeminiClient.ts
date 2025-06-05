@@ -3,7 +3,7 @@ import { LRUCache } from 'lru-cache';
 import { GeminiRequestParams, GeminiResponse } from '@/lib/types/search';
 
 // Default model to use if not specified in params
-const DEFAULT_MODEL_NAME = "gemini-pro";
+const DEFAULT_MODEL_NAME = "gemini-1.5-flash-latest";
 
 // Default Cache Configuration
 const DEFAULT_CACHE_TTL_MS = process.env.GEMINI_CACHE_TTL_MS ? parseInt(process.env.GEMINI_CACHE_TTL_MS, 10) : 1000 * 60 * 60; // 1 hour
