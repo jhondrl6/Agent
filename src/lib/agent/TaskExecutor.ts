@@ -199,19 +199,9 @@ export class TaskExecutor {
             break;
         }
       } else {
-        this.addLog({ level: 'debug', message: `[TE] Task ${task.id} is not a search task. Using simulation.`});
-        logger.debug(`Task ${task.id} is not a search task. Using simulation.`, 'TaskExecutor');
-        const executionTime = Math.random() * 1500 + 500;
-        await new Promise(resolve => setTimeout(resolve, executionTime));
-        const isSuccess = Math.random() > 0.2;
-        if (isSuccess) {
-          taskResultForValidation = `Simulated success for: ${task.description}. Detailed findings: Proin quis tortor orci. Etiam at risus et justo dignissim congue.`;
-          logger.info(`Simulated success for non-search task ${task.id}.`, 'TaskExecutor');
-        } else {
-          const simErrorMsg = `Simulated failure for: ${task.description}. Could not retrieve necessary data.`;
-          logger.warn(`Simulated failure for non-search task ${task.id}.`, 'TaskExecutor', { error: simErrorMsg });
-          throw new Error(simErrorMsg);
-        }
+        this.addLog({ level: 'warn', message: `[TE] Task ${task.id} ('${task.description}') is not a recognized search task and no other execution logic is implemented. Marking as failed.`});
+        logger.warn(`Task ${task.id} ('${task.description}') is not a recognized search task and no other execution logic is implemented. Marking as failed.`, 'TaskExecutor');
+        throw new Error(`Task type not implemented: ${task.description}`);
       }
 
       this.addLog({ level: 'debug', message: `[TE] Task ${task.id} obtained raw result, proceeding to validation.`, details: { resultSummary: String(taskResultForValidation).substring(0,100)+"..." } });
