@@ -5,7 +5,7 @@ import { Mission } from '@prisma/client'; // Assuming Mission type is needed for
 
 // Define the expected status string for in-progress missions.
 // This should match the status string used in the database.
-const IN_PROGRESS_STATUS = 'in_progress'; // Common convention
+const IN_PROGRESS_STATUS = 'in-progress'; // Common convention
 
 export async function GET(request: Request) {
   try {

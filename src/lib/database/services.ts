@@ -9,7 +9,9 @@ function parseJsonStringIfNeeded(jsonValue: Prisma.JsonValue | null): any {
     try {
       return JSON.parse(jsonValue);
     } catch (e) {
-      // console.warn("Failed to parse JSON string, returning original string:", jsonValue, e);
+      // Enhanced logging
+      console.error(`[dbService] Failed to parse JSON string from DB. Error: ${(e as Error).message}. Value: '${jsonValue}'. Returning original string.`, { error: e, originalValue: jsonValue });
+      // Potentially log this to a more persistent system or add specific metrics in a real-world scenario.
       return jsonValue; // Return original string if parsing fails
     }
   }
