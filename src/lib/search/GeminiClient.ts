@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI, GenerativeModel, GenerationConfig, HarmCategory, HarmBlockThreshold, Content } from "@google/generative-ai";
 import { LRUCache } from 'lru-cache';
 import { GeminiRequestParams, GeminiResponse } from '@/lib/types/search';
+import { SummarizeRequest, SummarizeResponse } from '../types/summarize';
 
 // Default model to use if not specified in params
 const DEFAULT_MODEL_NAME = "gemini-1.5-flash-latest";
@@ -190,6 +191,70 @@ export class GeminiClient {
          throw new Error(`Gemini SDK error: ${error.message}`);
       }
       throw new Error('An unknown error occurred while fetching from Gemini API using SDK.');
+    }
+  }
+
+  async summarize(params: SummarizeRequest): Promise<SummarizeResponse> {
+    const { textToSummarize, targetLength = 'medium' } = params;
+
+    let prompt = `Summarize the following text`;
+    if (targetLength === 'short') {
+      prompt += ` concisely (1-2 sentences)`;
+    } else if (targetLength === 'long') {
+      prompt += ` in detail (multiple paragraphs if necessary)`;
+    } else {
+      prompt += ` (around 3-5 sentences)`; // Default for medium
+    }
+    prompt += `:
+
+"${textToSummarize}"`;
+
+    // Estimate maxOutputTokens based on targetLength. These are rough estimates.
+    let maxOutputTokens;
+    switch (targetLength) {
+      case 'short':
+        maxOutputTokens = 100;
+        break;
+      case 'long':
+        maxOutputTokens = 500;
+        break;
+      case 'medium':
+      default:
+        maxOutputTokens = 250;
+        break;
+    }
+
+    console.log(`[GeminiClient] Summarize called with targetLength: ${targetLength}, text length: ${textToSummarize.length}, generated prompt: "${prompt.substring(0,100)}...", maxOutputTokens: ${maxOutputTokens}`);
+
+    try {
+      const geminiResponse = await this.generate({
+        prompt: prompt,
+        maxOutputTokens: maxOutputTokens,
+        temperature: 0.7, // Temperature can be lower for summarization
+      });
+
+      let summaryText = '';
+      if (geminiResponse.candidates && geminiResponse.candidates.length > 0) {
+        const firstCandidate = geminiResponse.candidates[0];
+        if (firstCandidate.content && firstCandidate.content.parts && firstCandidate.content.parts.length > 0) {
+          summaryText = firstCandidate.content.parts.map(part => part.text).join('\n');
+        }
+      }
+
+      if (!summaryText) {
+        console.error('[GeminiClient] Summarization failed: No text content found in Gemini response based on defined types.', geminiResponse);
+        throw new Error('Summarization failed: No text content found in Gemini response structure.');
+      }
+
+      console.log(`[GeminiClient] Successfully generated summary of length: ${summaryText.length}`);
+      return { summary: summaryText.trim() };
+
+    } catch (error) {
+      console.error('[GeminiClient] Error during summarization:', error);
+      if (error instanceof Error) {
+        throw new Error(`Summarization failed: ${error.message}`);
+      }
+      throw new Error('An unknown error occurred during summarization.');
     }
   }
 }
