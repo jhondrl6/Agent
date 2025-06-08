@@ -27,20 +27,30 @@ export class TaskDecomposer {
     this.addLog({ level: 'info', message: `[TD] Decomposing mission: ${mission.id}`, details: { missionId: mission.id, goal: mission.goal } });
 
     // System prompt defining the expected behavior and JSON output format
-    const systemPrompt = `You are an expert task decomposition AI. Your role is to break down a complex research mission into a series of actionable, distinct, and parallelizable sub-tasks.
+    const systemPrompt = `You are an expert task decomposition AI. Your role is to break down a complex research mission into a series of actionable, distinct, and parallelizable sub-tasks. Each task should be phrased as a research or investigation step.
 
-Return the tasks as a valid JSON array of objects. Each object in the array must have ONLY a "description" field detailing the sub-task.
-Do NOT include any other fields like id, status, etc.
-Do NOT output markdown (e.g., \`\`\`json ... \`\`\`). Output only the raw JSON array.
+Return the tasks as a valid JSON array of objects. Each object in the array must have ONLY a "description" field.
+- Each description should clearly state the research action. For example, start with phrases like "Research and define...", "Find information on...", "Investigate the details of...", "Search for examples of...".
+- Ensure the core of the original sub-task's meaning is preserved.
+- Do NOT include any other fields like id, status, etc.
+- Do NOT output markdown (e.g., \`\`\`json ... \`\`\`). Output only the raw JSON array.
 
-Example Input Mission: "Research the impact of AI on climate change."
+Example Input Mission: "Understand the process of photosynthesis."
 Example Output JSON:
 [
-  {"description": "Identify key areas where AI intersects with climate change (e.g., energy, agriculture, monitoring)."},
-  {"description": "Search for recent scientific papers and reports on AI applications in climate change mitigation."},
-  {"description": "Analyze data on the carbon footprint of AI model training and inference."},
-  {"description": "Investigate policy recommendations for leveraging AI to combat climate change."},
-  {"description": "Synthesize findings into a summary report."}
+  {"description": "Research and define: Photosynthesis, explaining the general process in simple terms."},
+  {"description": "Find information on: The light-dependent reactions, including photosystems I and II, the electron transport chain, and ATP/NADPH production."},
+  {"description": "Investigate the details of: The light-independent reactions (Calvin Cycle), covering carbon fixation, reduction, and RuBP regeneration."},
+  {"description": "Search for information on: The key inputs (water, CO2, light) and outputs (glucose, oxygen) of photosynthesis."}
+]
+
+Example Input Mission: "Explore the impact of renewable energy sources on reducing carbon emissions."
+Example Output JSON:
+[
+  {"description": "Research and identify: The main types of renewable energy sources (solar, wind, hydro, geothermal)."},
+  {"description": "Find information on: How each type of renewable energy source contributes to reducing carbon emissions."},
+  {"description": "Investigate: Case studies or reports detailing the measured impact of renewable energy adoption on emission levels in specific regions or countries."},
+  {"description": "Search for data on: The current global capacity and generation of renewable energy sources."}
 ]`;
 
     const userPrompt = `Mission: "${mission.goal}"`;
@@ -89,7 +99,9 @@ ${userPrompt}`;
           throw new Error('Gemini response is not a valid JSON array after cleaning.');
       }
 
+      this.addLog({ level: 'debug', message: `[TD] Attempting to parse cleaned JSON for mission ${mission.id}:`, details: { cleanedJson } });
       const decomposedTaskDescriptions = JSON.parse(cleanedJson) as { description: string }[];
+      this.addLog({ level: 'debug', message: `[TD] Parsed task descriptions for mission ${mission.id}:`, details: { decomposedTaskDescriptions } });
 
       if (!Array.isArray(decomposedTaskDescriptions) || !decomposedTaskDescriptions.every(t => t && typeof t.description === 'string')) {
           console.error('[TaskDecomposer] Parsed JSON is not in the expected format (array of {description: string}). Parsed:', decomposedTaskDescriptions);
