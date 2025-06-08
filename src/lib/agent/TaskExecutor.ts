@@ -5,6 +5,7 @@ import * as logger from '../utils/logger';
 import { useAgentStore } from './StateManager';
 import { TavilyClient } from '@/lib/search/TavilyClient';
 import { SerperClient } from '@/lib/search/SerperClient';
+import { GeminiClient } from '@/lib/search/GeminiClient'; // Added GeminiClient import
 import { TavilySearchParams, SerperSearchParams } from '@/lib/types/search';
 import { DecisionEngine, ChooseSearchProviderInput, SearchProviderOption, HandleFailedTaskInput } from './DecisionEngine';
 import { ResultValidator, ValidationInput, ValidationOutput } from '@/lib/search/ResultValidator';
@@ -41,6 +42,23 @@ export class TaskExecutor {
       let keywordIndex = descriptionLower.indexOf(keywordWithSpace);
       if (keywordIndex === 0) return description.substring(keywordWithSpace.length).trim();
     }
+    return description.trim();
+  }
+
+  private extractTextToSummarize(description: string, keywords: string[]): string {
+    const descriptionLower = description.toLowerCase();
+    for (const keyword of keywords) {
+      // Ensure keyword is a prefix
+      if (descriptionLower.startsWith(keyword.trim())) {
+        // Return the part of the description after the keyword
+        return description.substring(keyword.length).trim();
+      }
+    }
+    // If no keyword matched (should not happen if isSummarizeTask is true),
+    // or if the keyword is the entire description (unlikely for summarize),
+    // return the original description, though this might indicate an issue.
+    // Or, more robustly, this function should only be called if a keyword is known to be a prefix.
+    // For now, let's assume it's called correctly.
     return description.trim();
   }
 
@@ -87,11 +105,52 @@ export class TaskExecutor {
 
       const descriptionLower = task.description.toLowerCase();
       const searchKeywords = ["search for", "find information on", "find information about", "research", "look up", "investigate", "google search for", "serper search for", "tavily search for"];
-      const isSearchTask = searchKeywords.some(keyword => descriptionLower.includes(keyword.trim()));
+      const summarizeKeywords = ["summarize:", "summarize the following", "provide a summary of", "create a summary of", "generate a summary for"];
+      const isSummarizeTask = summarizeKeywords.some(keyword => descriptionLower.startsWith(keyword.trim()));
+      // Ensure isSearchTask is mutually exclusive if isSummarizeTask is true
+      const isSearchTask = !isSummarizeTask && searchKeywords.some(keyword => descriptionLower.includes(keyword.trim()));
 
-      if (isSearchTask) {
+      if (isSummarizeTask) {
+          const textToSummarize = this.extractTextToSummarize(task.description, summarizeKeywords);
+
+          this.addLog({
+              level: 'info',
+              message: `[TE] Task ${task.id} identified as SUMMARIZE task. Text to summarize (first 100 chars): "${textToSummarize.substring(0, 100)}..."`,
+              details: { missionId, taskId: task.id }
+          });
+          logger.info(`Task ${task.id} is a SUMMARIZE task.`, 'TaskExecutor', { taskId: task.id, textLength: textToSummarize.length });
+
+          const geminiApiKey = process.env.GEMINI_API_KEY;
+          if (!geminiApiKey) {
+              taskResultForValidation = 'Configuration error: Gemini API key not found for summarization.';
+              logger.error('Gemini API key (GEMINI_API_KEY) is not configured for summarization.', 'TaskExecutor', { taskId: task.id });
+              if (this.backendCallbacks?.setAgentFailure) {
+                  await this.backendCallbacks.setAgentFailure(missionId, 'Gemini API key (GEMINI_API_KEY) is not configured for summarization.');
+              } else {
+                  useAgentStore.getState().setAgentError('Gemini API key (GEMINI_API_KEY) is not configured for summarization.');
+              }
+              // This will flow to validation, fail, and be handled by DecisionEngine.
+          } else {
+              const geminiClient = new GeminiClient(geminiApiKey);
+              try {
+                  // For now, use default targetLength. This could be extracted from task.description too.
+                  const summarizeResponse = await geminiClient.summarize({ textToSummarize: textToSummarize, targetLength: 'medium' });
+                  taskResultForValidation = summarizeResponse.summary;
+                  logger.debug(`Summarization for task ${task.id} successful.`, 'TaskExecutor', { summaryLength: taskResultForValidation.length });
+                  this.addLog({
+                      level: 'debug',
+                      message: `[TE] Task ${task.id} summarization successful. Summary length: ${taskResultForValidation.length}`,
+                      details: { missionId, taskId: task.id }
+                  });
+
+              } catch (summarizeError: any) {
+                  logger.error('Error during summarization execution', 'TaskExecutor', summarizeError, { taskId: task.id, textLength: textToSummarize.length });
+                  this.addLog({ level: 'error', message: `Task ${task.id} failed during summarization execution: ${summarizeError.message}`, details: { error: summarizeError } });
+                  throw summarizeError;
+              }
+          }
+      } else if (isSearchTask) {
         const geminiApiKeyForDecision = process.env.GEMINI_API_KEY;
-        // Pass this.addLog to DecisionEngine constructor
         const decisionEngine = new DecisionEngine(this.addLog, geminiApiKeyForDecision); // DecisionEngine uses its own logger calls internally now
         const availableProviders: SearchProviderOption[] = ['tavily', 'serper', 'gemini'];
         logger.debug(`Task ${task.id} is a search task. Choosing provider.`, 'TaskExecutor', { availableProviders });
@@ -201,9 +260,12 @@ export class TaskExecutor {
       } else {
         this.addLog({ level: 'warn', message: `[TE] Task ${task.id} ('${task.description}') is not a recognized search task and no other execution logic is implemented. Marking as failed.`});
         logger.warn(`Task ${task.id} ('${task.description}') is not a recognized search task and no other execution logic is implemented. Marking as failed.`, 'TaskExecutor');
-        throw new Error(`Task type not implemented: ${task.description}`);
+        this.addLog({ level: 'warn', message: `[TE] Task ${task.id} ('${task.description}') is not a recognized SUMMARIZE or SEARCH task. Marking as failed.`});
+        logger.warn(`Task ${task.id} ('${task.description}') is not a recognized SUMMARIZE or SEARCH task. Marking as failed.`, 'TaskExecutor');
+        throw new Error(`Task type not implemented or description unclear: ${task.description}`);
       }
 
+      // COMMON VALIDATION LOGIC for taskResultForValidation
       this.addLog({ level: 'debug', message: `[TE] Task ${task.id} obtained raw result, proceeding to validation.`, details: { resultSummary: String(taskResultForValidation).substring(0,100)+"..." } });
       logger.debug(`Task ${task.id} obtained raw result, proceeding to validation.`, 'TaskExecutor', { resultSummary: String(taskResultForValidation).substring(0,100)+"..." });
 
