@@ -142,6 +142,7 @@ export class AgentExecutionEngine {
   async runOnce(): Promise<void> {
     logger.info('Starting AgentExecutionEngine runOnce cycle.', 'AgentExecutionEngine');
     const missions = await this.getProcessableMissions();
+    logger.info(`[AgentEngine] Fetched ${missions.length} processable mission(s) in this cycle.`, 'AgentExecutionEngine', { count: missions.length });
 
     if (missions.length === 0) {
       logger.info('No processable missions found in this cycle.', 'AgentExecutionEngine');
@@ -149,6 +150,7 @@ export class AgentExecutionEngine {
     }
 
     for (const mission of missions) {
+      logger.info(`[AgentEngine] Processing mission: ${mission.id}, Status: ${mission.status}, Task count: ${mission.tasks.length}`, 'AgentExecutionEngine', { missionId: mission.id, status: mission.status, taskCount: mission.tasks.length });
       logger.info(`Processing mission ${mission.id} (${mission.status}).`, 'AgentExecutionEngine', { missionId: mission.id });
 
       if (mission.status === 'pending') {
